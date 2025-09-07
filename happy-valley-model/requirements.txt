@@ -1,0 +1,22 @@
+# Core scientific stack
+numpy==1.26.4
+pandas==2.2.3
+scikit-learn==1.5.2
+
+# Gradient boosting for tabular racing data
+xgboost==2.1.1
+lightgbm==4.5.0
+
+# Web + PDF data ingestion
+requests==2.32.3
+beautifulsoup4==4.12.3
+pdfplumber==0.11.0
+
+# Utilities
+tqdm==4.66.5
+joblib==1.4.2
+
+# Exploration & visualization
+jupyter==1.0.0
+matplotlib==3.9.2
+seaborn==0.13.2
