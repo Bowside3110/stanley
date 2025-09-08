@@ -1,2 +1,13 @@
 # Data folder
 data/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*.class
+
+# Zip files
+*.zip
+
+# CSV files in root
+/*.csv
