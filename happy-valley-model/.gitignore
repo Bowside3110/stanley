@@ -11,3 +11,6 @@ __pycache__/
 
 # CSV files in root
 /*.csv
+
+# Output directory
+out/
