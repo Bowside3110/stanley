@@ -3,6 +3,8 @@ data/
 
 # Python cache files
 __pycache__/
+*/__pycache__/
+**/__pycache__/
 *.py[cod]
 *.class
 
@@ -14,3 +16,10 @@ __pycache__/
 
 # Output directory
 out/
+
+# Test and script directories
+tests/
+scripts/
+
+# Database files
+*.db

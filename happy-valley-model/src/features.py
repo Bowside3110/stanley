@@ -1,4 +1,3 @@
-# src/features.py
 from __future__ import annotations
 
 import sqlite3
@@ -9,7 +8,11 @@ import pandas as pd
 # ---------------- Helpers ----------------
 
 def _read_sql(conn: sqlite3.Connection, sql: str, params: tuple | None = None) -> pd.DataFrame:
-    return pd.read_sql_query(sql, conn, params=params)
+    """Wrapper around pd.read_sql_query that avoids passing params=None."""
+    if params is not None:
+        return pd.read_sql_query(sql, conn, params=params)
+    else:
+        return pd.read_sql_query(sql, conn)
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     cur = conn.execute(
@@ -124,6 +127,69 @@ def _equipment_flags(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ---------------- New: Margins & Times ----------------
+
+def _add_margins_and_times(conn, df):
+    if not _table_exists(conn, "horse_results"):
+        return df
+    hr = _read_sql(conn, """
+        SELECT horse_id, date, btn, time, dist_m, class
+        FROM horse_results
+        WHERE date IS NOT NULL
+        ORDER BY horse_id, date
+    """)
+    hr["date"] = pd.to_datetime(hr["date"], errors="coerce")
+    hr["btn"] = pd.to_numeric(hr["btn"], errors="coerce")
+    hr["dist_m"] = pd.to_numeric(hr["dist_m"], errors="coerce")
+    hr["time_sec"] = pd.to_timedelta(hr["time"], errors="coerce").dt.total_seconds()
+
+    feats = []
+    for hid, g in hr.groupby("horse_id"):
+        g = g.sort_values("date")
+        g["btn_last3"] = g["btn"].rolling(3, min_periods=1).mean()
+        g["time_last3"] = g["time_sec"].rolling(3, min_periods=1).mean()
+        g["form_close"] = (g["btn"] <= 1).astype(int).rolling(3, min_periods=1).mean()
+        feats.append(g[["horse_id","date","btn_last3","time_last3","form_close"]])
+    feats = pd.concat(feats)
+
+    feats["date"] = pd.to_datetime(feats["date"], errors="coerce")
+    df = df.merge(feats, left_on=["horse_id","race_date"],
+                  right_on=["horse_id","date"], how="left")
+    df = df.drop(columns="date", errors="ignore")
+    return df
+
+
+# ---------------- New: Class / Distance Moves ----------------
+
+def _add_class_distance_moves(conn, df):
+    if not _table_exists(conn, "horse_results"):
+        return df
+    hr = _read_sql(conn, """
+        SELECT horse_id, date, dist_m, class
+        FROM horse_results
+        WHERE date IS NOT NULL
+        ORDER BY horse_id, date
+    """)
+    hr["date"] = pd.to_datetime(hr["date"], errors="coerce")
+    hr["dist_m"] = pd.to_numeric(hr["dist_m"], errors="coerce")
+
+    feats = []
+    for hid, g in hr.groupby("horse_id"):
+        g = g.sort_values("date")
+        g["prev_class"] = g["class"].shift(1)
+        g["prev_dist_m"] = g["dist_m"].shift(1)
+        g["class_move"] = (g["prev_class"] != g["class"]).astype(int)
+        g["dist_delta"] = g["dist_m"] - g["prev_dist_m"]
+        feats.append(g[["horse_id","date","class_move","dist_delta"]])
+    feats = pd.concat(feats)
+
+    feats["date"] = pd.to_datetime(feats["date"], errors="coerce")
+    df = df.merge(feats, left_on=["horse_id","race_date"],
+                  right_on=["horse_id","date"], how="left")
+    df = df.drop(columns="date", errors="ignore")
+    return df
+
+
 # ---------------- Public entrypoint ----------------
 
 def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
@@ -133,8 +199,9 @@ def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
         df = _attach_racecard_runner_fields(conn, df)
         df = _equipment_flags(df)
 
-        # TODO: re-attach all your other feature builders (days_since_last_run, career stats, etc.)
-        # They can remain unchanged; this is just the racecard patch.
+        # New features
+        df = _add_margins_and_times(conn, df)
+        df = _add_class_distance_moves(conn, df)
 
         # Deterministic order
         df["__ord"] = df["draw"].fillna(9999)
@@ -143,3 +210,15 @@ def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
         return df
     finally:
         conn.close()
+
+
+# ---------------- Feature picker ----------------
+
+def _pick_features(df: pd.DataFrame) -> list[str]:
+    """Pick numeric runner-level features from the feature frame."""
+    return [
+        c for c in df.columns
+        if c not in ["race_id", "race_date", "race_name", "horse_id", "horse",
+                     "trainer_id", "jockey_id", "position"]
+           and pd.api.types.is_numeric_dtype(df[c])
+    ]
