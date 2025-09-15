@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from itertools import combinations
 from sklearn.ensemble import HistGradientBoostingClassifier
-from src.features import build_features
+from src.features import build_features, _pick_features
 
 
 # ---------------- Utilities ----------------
@@ -104,14 +104,10 @@ if __name__ == "__main__":
     # 1. Build features
     df_full = build_features(args.db)
 
-    # pick numeric runner-level features
-    runner_feats = [
-        c for c in df_full.columns
-        if c not in ["race_id", "race_date", "race_name", "horse_id", "horse",
-                     "trainer_id", "jockey_id", "position"]
-           and pd.api.types.is_numeric_dtype(df_full[c])
-    ]
-    print(f"\n[Sanity] Using {len(runner_feats)} numeric features")
+    # pick numeric runner-level features (centralized)
+    runner_feats = _pick_features(df_full)
+    print(f"\n[Sanity] Using {len(runner_feats)} numeric features:")
+    print(runner_feats)
 
     # 2. Train/test split
     df_train, df_test = _train_test_split_by_date(df_full, test_frac=args.test_frac)

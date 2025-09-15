@@ -8,7 +8,6 @@ import pandas as pd
 # ---------------- Helpers ----------------
 
 def _read_sql(conn: sqlite3.Connection, sql: str, params: tuple | None = None) -> pd.DataFrame:
-    """Wrapper around pd.read_sql_query that avoids passing params=None."""
     if params is not None:
         return pd.read_sql_query(sql, conn, params=params)
     else:
@@ -56,9 +55,6 @@ def _parse_frac_odds_to_decimal(s) -> float:
 # ---------------- Base pull ----------------
 
 def _base_frame(conn: sqlite3.Connection) -> pd.DataFrame:
-    """
-    Base = races + runners + results, enriched with racecard_pro if available.
-    """
     sql = """
     SELECT
         r.race_id,
@@ -127,7 +123,7 @@ def _equipment_flags(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ---------------- New: Margins & Times ----------------
+# ---------------- Margins & Times ----------------
 
 def _add_margins_and_times(conn, df):
     if not _table_exists(conn, "horse_results"):
@@ -159,7 +155,7 @@ def _add_margins_and_times(conn, df):
     return df
 
 
-# ---------------- New: Class / Distance Moves ----------------
+# ---------------- Class / Distance Moves ----------------
 
 def _add_class_distance_moves(conn, df):
     if not _table_exists(conn, "horse_results"):
@@ -190,6 +186,22 @@ def _add_class_distance_moves(conn, df):
     return df
 
 
+# ---------------- Phase 1 Features ----------------
+
+def _add_relative_draw_and_weight(df: pd.DataFrame) -> pd.DataFrame:
+    df["field_size"] = df.groupby("race_id")["horse_id"].transform("count")
+    df["rel_draw"] = df["draw"].astype(float) / df["field_size"]
+
+    df["avg_weight"] = df.groupby("race_id")["weight"].transform("mean")
+    df["rel_weight"] = df["weight"] - df["avg_weight"]
+    return df
+
+def _add_market_probs(df: pd.DataFrame) -> pd.DataFrame:
+    df["market_prob"] = 1 / df["win_odds"].replace(0, np.nan)
+    df["market_logit"] = np.log(df["market_prob"] / (1 - df["market_prob"]))
+    return df
+
+
 # ---------------- Public entrypoint ----------------
 
 def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
@@ -199,11 +211,13 @@ def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
         df = _attach_racecard_runner_fields(conn, df)
         df = _equipment_flags(df)
 
-        # New features
         df = _add_margins_and_times(conn, df)
         df = _add_class_distance_moves(conn, df)
 
-        # Deterministic order
+        # --- Phase 1 new features ---
+        df = _add_relative_draw_and_weight(df)
+        df = _add_market_probs(df)
+
         df["__ord"] = df["draw"].fillna(9999)
         df = df.sort_values(["race_id", "__ord", "horse_id"]).drop(columns="__ord")
 
@@ -215,10 +229,21 @@ def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
 # ---------------- Feature picker ----------------
 
 def _pick_features(df: pd.DataFrame) -> list[str]:
-    """Pick numeric runner-level features from the feature frame."""
-    return [
-        c for c in df.columns
-        if c not in ["race_id", "race_date", "race_name", "horse_id", "horse",
-                     "trainer_id", "jockey_id", "position"]
-           and pd.api.types.is_numeric_dtype(df[c])
+    base_exclude = [
+        "race_id", "race_date", "race_name", "horse_id", "horse",
+        "trainer_id", "jockey_id", "position"
     ]
+
+    # Standard numeric selection
+    feats = [
+        c for c in df.columns
+        if c not in base_exclude and pd.api.types.is_numeric_dtype(df[c])
+    ]
+
+    # Always include Phase 1 features explicitly
+    must_have = ["rel_draw", "rel_weight", "market_prob", "market_logit"]
+    for col in must_have:
+        if col in df.columns and col not in feats:
+            feats.append(col)
+
+    return feats
