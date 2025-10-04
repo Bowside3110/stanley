@@ -35,44 +35,76 @@ def import_races(json_path):
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
+    if isinstance(data, dict) and "raceMeetings" in data:
+        meetings = data["raceMeetings"]
+    else:
+        raise ValueError("Unexpected JSON structure: no 'raceMeetings' found")
+
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    for meeting in data:
+    race_count, runner_count = 0, 0
+    missing_odds = 0
+
+    for meeting in meetings:
         race_date = meeting["date"]
-        venue = meeting["venueCode"]
+        course = meeting["venueCode"]
 
         for race in meeting.get("races", []):
             race_id = race["id"]
             race_no = race["no"]
             race_name = race.get("raceName_en", "")
+            race_class = race.get("raceClass_en", "")
+            distance = race.get("distance")
+            going = race.get("raceTrack", {}).get("description_en")
+            rail = race.get("raceCourse", {}).get("description_en")
 
+            # Insert race
+            cur.execute("""
+                INSERT OR REPLACE INTO races
+                (race_id, date, course, race_name, class, distance, going, rail)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                race_id, race_date, course, race_name, race_class,
+                distance, going, rail
+            ))
+            race_count += 1
+
+            # Insert runners
             for runner in race.get("runners", []):
                 horse_id = runner["id"]
                 horse_name = runner.get("name_en", "")
-                trainer_id = runner["trainer"]["code"] if runner.get("trainer") else None
-                trainer_name = runner["trainer"]["name_en"] if runner.get("trainer") else None
-                jockey_id = runner["jockey"]["code"] if runner.get("jockey") else None
-                jockey_name = runner["jockey"]["name_en"] if runner.get("jockey") else None
                 draw = runner.get("barrierDrawNumber")
                 weight = runner.get("handicapWeight")
                 win_odds = runner.get("winOdds")
 
+                jockey_id = runner["jockey"]["code"] if runner.get("jockey") else None
+                jockey_name = runner["jockey"]["name_en"] if runner.get("jockey") else None
+                trainer_id = runner["trainer"]["code"] if runner.get("trainer") else None
+                trainer_name = runner["trainer"]["name_en"] if runner.get("trainer") else None
+
+                # NEW: capture runner status
+                status = runner.get("status", "unknown")
+
                 cur.execute("""
                     INSERT OR REPLACE INTO runners
-                    (race_id, race_date, race_no, race_name,
-                     venue, horse_id, horse, trainer_id, trainer,
-                     jockey_id, jockey, draw, weight, win_odds, position)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    (race_id, horse_id, horse, draw, weight, jockey, jockey_id,
+                    trainer, trainer_id, win_odds, position, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                 """, (
-                    race_id, race_date, race_no, race_name,
-                    venue, horse_id, horse_name, trainer_id, trainer_name,
-                    jockey_id, jockey_name, draw, weight, win_odds
+                    race_id, horse_id, horse_name, draw, weight,
+                    jockey_name, jockey_id, trainer_name, trainer_id, win_odds, status
                 ))
+
+                runner_count += 1
 
     conn.commit()
     conn.close()
-    print("✅ Races imported into database")
+    print(f"✅ Imported {race_count} races and {runner_count} runners into database")
+
+    if missing_odds > 0:
+        print(f"⚠️ Warning: {missing_odds} runners are missing win odds. "
+              f"Predictions will be made without odds data.")
 
 def run_predictions(date):
     """Run your predict_future.py with the given date"""
@@ -87,18 +119,29 @@ def run_predictions(date):
     ])
     return out_csv
 
-def show_cheat_sheet(csv_path):
-    """Print the predictions cheat sheet with venue info"""
-    print(f"\n📊 Cheat sheet from {csv_path}")
+def show_cheat_sheet(csv_path: str):
+    import pandas as pd
     df = pd.read_csv(csv_path)
-    for (race_id, venue), group in df.groupby(["race_id", "race_name"]):
-        race_name = group["race_name"].iloc[0]
-        # try to show venue if present
-        venue_val = group["venue"].iloc[0] if "venue" in group else ""
-        header = f"{race_name} ({venue_val})" if venue_val else race_name
-        print(f"\n=== {header} ===")
-        for _, row in group.sort_values("rank").iterrows():
-            print(f"{int(row['rank'])}. {row['horse']} ({row['score']:.3f})")
+
+    # If status column exists, filter to Declared only
+    if "status" in df.columns:
+        non_declared = df[df["status"].str.lower() != "declared"]
+        if not non_declared.empty:
+            print(f"⚠️ Note: {len(non_declared)} non-declared runners (scratched/standby) "
+                  f"excluded from cheat sheet output.")
+        df = df[df["status"].str.lower() == "declared"]
+
+    # Group by race and display
+    for rid, g in df.groupby("race_id"):
+        race_name = g["race_name"].iloc[0] if "race_name" in g else "Unknown Race"
+        print(f"\nRace: {race_name}")
+        print("Ranked selections:")
+
+        top_n = g.sort_values("rank").head(5)
+        for _, row in top_n.iterrows():
+            horse = row["horse"]
+            score = row["score"]
+            print(f" {row['rank']}. {horse} ({score:.3f})")
 
 if __name__ == "__main__":
     run_node_fetch()
