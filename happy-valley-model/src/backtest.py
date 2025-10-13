@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from itertools import combinations
 from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.inspection import permutation_importance
 from src.features import build_features, _pick_features
 
 
@@ -137,6 +138,17 @@ if __name__ == "__main__":
     test_pairs["p_raw"] = model.predict_proba(X_te)[:, 1]
     dir_df = softmax_pairs(test_pairs[["race_id", "pair", "p_raw"]])
 
+   # 5b. Feature importance
+    print("\n=== Feature importance (by predictive value) ===")
+    result = permutation_importance(model, X_tr, y_tr, n_repeats=5, random_state=42, n_jobs=1)
+    feat_imp = pd.DataFrame({
+        "feature": X_tr.columns,
+        "importance_mean": result.importances_mean,
+        "importance_std": result.importances_std
+    }).sort_values("importance_mean", ascending=False)
+
+    print(feat_imp.to_string(index=False))
+
     # 6. Evaluate hit rates
     gold_df = _actual_top2(df_test)
 
@@ -168,3 +180,137 @@ if __name__ == "__main__":
         joined = box_df.merge(gold_df, on="race_id", how="inner")
         hits = joined.apply(lambda row: row["actual_top2"] in row["box_pairs"], axis=1)
         print(f"DirectPair — box-{n} horses quinella hit rate: {hits.mean()*100:.2f}%")
+
+    # 7. Assessment by race class
+    print("\n=== Prediction quality by race class ===")
+    test_with_class = df_test[["race_id", "race_class"]].drop_duplicates()
+    dir_df_with_class = dir_df.merge(test_with_class, on="race_id", how="left")
+    gold_df_with_class = gold_df.merge(test_with_class, on="race_id", how="left")
+
+    for cls, cls_pairs in dir_df_with_class.groupby("race_class"):
+        print(f"\nRace class: {cls}")
+        cls_gold = gold_df_with_class[gold_df_with_class["race_class"] == cls]
+
+        for k in [1, 2, 3]:
+            top_df = (
+                cls_pairs.sort_values(["race_id", "p_pair"], ascending=[True, False])
+                        .groupby("race_id").head(k)
+                        .groupby("race_id")["pair"].apply(list).reset_index(name="top_pairs")
+            )
+            hit = _hit_rate(top_df, cls_gold)
+            rnd = _random_baseline(
+                df_test[df_test["race_class"] == cls], k
+            )
+            lift = (hit / rnd) if rnd > 0 else float("inf")
+            print(f"  Top-{k} hit rate: {hit*100:.2f}% "
+                  f"(random: {rnd*100:.2f}%, lift: {lift:.1f}×)")
+
+        # Optional: box-4/5 per class
+        for n in [4, 5]:
+            out_rows = []
+            for rid, g in cls_pairs.groupby("race_id"):
+                scores = {}
+                for _, r in g.iterrows():
+                    h1, h2 = r["pair"]
+                    scores[h1] = scores.get(h1, 0) + r["p_pair"]
+                    scores[h2] = scores.get(h2, 0) + r["p_pair"]
+                top_horses = sorted(scores, key=scores.get, reverse=True)[:n]
+                sel_pairs = [tuple(sorted(p)) for p in combinations(top_horses, 2)]
+                out_rows.append({"race_id": rid, "box_pairs": sel_pairs})
+            box_df = pd.DataFrame(out_rows)
+            joined = box_df.merge(cls_gold, on="race_id", how="inner")
+            hits = joined.apply(lambda row: row["actual_top2"] in row["box_pairs"], axis=1)
+            print(f"  Box-{n} hit rate: {hits.mean()*100:.2f}%")
+
+    # 8. Summary table by race class
+    rows = []
+    for cls, cls_pairs in dir_df_with_class.dropna(subset=["race_class"]).groupby("race_class"):
+        cls_gold = gold_df_with_class[gold_df_with_class["race_class"] == cls]
+
+        # top-1/2/3
+        for k in [1, 2, 3]:
+            top_df = (
+                cls_pairs.sort_values(["race_id", "p_pair"], ascending=[True, False])
+                        .groupby("race_id").head(k)
+                        .groupby("race_id")["pair"].apply(list).reset_index(name="top_pairs")
+            )
+            hit = _hit_rate(top_df, cls_gold)
+            rnd = _random_baseline(df_test[df_test["race_class"] == cls], k)
+            rows.append({
+                "race_class": cls,
+                "metric": f"Top-{k}",
+                "hit_rate": round(hit*100, 2),
+                "random": round(rnd*100, 2),
+                "lift": round((hit/rnd) if rnd > 0 else float("inf"), 1)
+            })
+
+        # box-4/5
+        for n in [4, 5]:
+            out_rows = []
+            for rid, g in cls_pairs.groupby("race_id"):
+                scores = {}
+                for _, r in g.iterrows():
+                    h1, h2 = r["pair"]
+                    scores[h1] = scores.get(h1, 0) + r["p_pair"]
+                    scores[h2] = scores.get(h2, 0) + r["p_pair"]
+                top_horses = sorted(scores, key=scores.get, reverse=True)[:n]
+                sel_pairs = [tuple(sorted(p)) for p in combinations(top_horses, 2)]
+                out_rows.append({"race_id": rid, "box_pairs": sel_pairs})
+            box_df = pd.DataFrame(out_rows)
+            joined = box_df.merge(cls_gold, on="race_id", how="inner")
+            hits = joined.apply(lambda row: row["actual_top2"] in row["box_pairs"], axis=1)
+            rows.append({
+                "race_class": cls,
+                "metric": f"Box-{n}",
+                "hit_rate": round(hits.mean()*100, 2),
+                "random": None,
+                "lift": None
+            })
+
+    summary_df = pd.DataFrame(rows)
+    print("\n=== Summary by race class ===")
+    print(summary_df.pivot(index="race_class", columns="metric", values="hit_rate"))
+
+    # 9. Overlay analysis: model vs market disagreement
+    print("\n=== Overlay analysis (model vs market) ===")
+
+    # Get market probabilities at runner level
+    runner_probs = df_test[["race_id", "horse_id", "market_prob"]]
+
+    # Expand to pairs, align with test_pairs
+    pairs_with_market = []
+    for rid, grp in df_test.groupby("race_id"):
+        horses = grp["horse_id"].tolist()
+        probs = dict(zip(grp["horse_id"], grp["market_prob"]))
+        for i, j in combinations(horses, 2):
+            pi, pj = probs.get(i, np.nan), probs.get(j, np.nan)
+            if pd.notna(pi) and pd.notna(pj):
+                # naive market probability = product of individual probs
+                market_p = pi * pj
+            else:
+                market_p = np.nan
+            pairs_with_market.append({"race_id": rid, "pair": tuple(sorted((i, j))), "market_p": market_p})
+
+    market_df = pd.DataFrame(pairs_with_market)
+
+    # Merge with model predictions
+    overlay_df = dir_df.merge(market_df, on=["race_id", "pair"], how="left")
+
+    # Compute overlay ratio (model vs market)
+    overlay_df["overlay"] = overlay_df["p_pair"] / overlay_df["market_p"]
+
+    # Attach gold outcomes
+    gold_pairs = gold_df.rename(columns={"actual_top2": "gold_pair"})
+    overlay_df = overlay_df.merge(gold_pairs, on="race_id", how="left")
+    overlay_df["hit"] = overlay_df.apply(lambda r: r["pair"] == r["gold_pair"], axis=1)
+
+    # Bucket by overlay size
+    bins = [0, 0.5, 1.0, 1.5, 2.0, np.inf]
+    labels = ["<0.5x", "0.5–1.0x", "1.0–1.5x", "1.5–2.0x", "2.0x+"]
+    overlay_df["bucket"] = pd.cut(overlay_df["overlay"], bins=bins, labels=labels, include_lowest=True)
+
+    # Evaluate hit rates by bucket
+    summary = overlay_df.groupby("bucket")["hit"].mean().reset_index()
+    summary["hit_rate_%"] = summary["hit"] * 100
+
+    print(summary.to_string(index=False))

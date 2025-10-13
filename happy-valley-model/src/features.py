@@ -51,20 +51,18 @@ def _parse_frac_odds_to_decimal(s) -> float:
     except Exception:
         return np.nan
 
-
 # ---------------- Base pull ----------------
-
 def _base_frame(conn: sqlite3.Connection) -> pd.DataFrame:
     sql = """
     SELECT
         r.race_id,
         r.date AS race_date,
         r.course,
-        rc.race_name,
-        rc.race_class,
-        rc.going,
-        rc.dist_m,
-        rc.rail,
+        r.race_name,
+        r.class AS race_class,
+        r.going,
+        r.distance AS dist_m,
+        r.rail,
         run.horse_id,
         run.horse,
         run.draw,
@@ -72,19 +70,33 @@ def _base_frame(conn: sqlite3.Connection) -> pd.DataFrame:
         run.win_odds,
         run.jockey_id,
         run.trainer_id,
+        run.status,
         res.position
     FROM races r
-    JOIN runners run ON run.race_id = r.race_id
-    LEFT JOIN results res ON res.race_id = run.race_id AND res.horse_id = run.horse_id
-    LEFT JOIN racecard_pro rc ON rc.race_id = r.race_id
-    WHERE r.course LIKE '%(HK)' AND r.race_id IS NOT NULL
+    JOIN runners run 
+        ON run.race_id = r.race_id
+    LEFT JOIN results res 
+        ON res.race_id = run.race_id
+       AND res.horse_id = run.horse_id
+    WHERE r.course IN ('ST', 'HV', 'Sha Tin (HK)', 'Happy Valley (HK)')
+      AND r.race_id IS NOT NULL
     """
     df = _read_sql(conn, sql)
+
+    # standard parsing
     df["race_date"] = pd.to_datetime(df["race_date"])
     df["draw"] = pd.to_numeric(df["draw"], errors="coerce")
     df["position"] = pd.to_numeric(df["position"], errors="coerce")
     df["weight"] = df["weight"].apply(_parse_weight_lbs)
     df["win_odds"] = pd.to_numeric(df["win_odds"], errors="coerce")
+
+    # ✅ Only filter by status for future races (no result yet)
+    if "status" in df.columns:
+        mask_future = df["position"].isna()
+        df.loc[mask_future] = df.loc[mask_future].loc[
+            df.loc[mask_future, "status"].str.lower() == "declared"
+        ]
+
     return df
 
 
@@ -202,6 +214,40 @@ def _add_market_probs(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ---------------- Rolling form ----------------
+
+def _add_rolling_form(df: pd.DataFrame) -> pd.DataFrame:
+    # Horse rolling form
+    df = df.sort_values(['horse_id','race_date'])
+    df['horse_pos_avg3'] = (
+        df.groupby('horse_id')['position']
+          .transform(lambda x: x.rolling(3, 1).mean().shift(1))
+    )
+    df['horse_last_placed'] = (
+        df.groupby('horse_id')['position']
+          .shift(1)
+          .between(1, 3).astype(int)
+    )
+
+    # Trainer rolling strike rate
+    df = df.sort_values(['trainer_id','race_date'])
+    df['trainer_win30'] = (
+        df.assign(win=(df['position'] == 1).astype(int))
+          .groupby('trainer_id')['win']
+          .transform(lambda x: x.rolling(window=50, min_periods=5).mean().shift(1))
+    )
+
+    # Jockey rolling strike rate
+    df = df.sort_values(['jockey_id','race_date'])
+    df['jockey_win30'] = (
+        df.assign(win=(df['position'] == 1).astype(int))
+          .groupby('jockey_id')['win']
+          .transform(lambda x: x.rolling(window=50, min_periods=5).mean().shift(1))
+    )
+
+    return df
+
+
 # ---------------- Public entrypoint ----------------
 
 def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
@@ -218,6 +264,9 @@ def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
         df = _add_relative_draw_and_weight(df)
         df = _add_market_probs(df)
 
+        # --- Phase 2 rolling form ---
+        df = _add_rolling_form(df)
+
         df["__ord"] = df["draw"].fillna(9999)
         df = df.sort_values(["race_id", "__ord", "horse_id"]).drop(columns="__ord")
 
@@ -230,20 +279,49 @@ def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
 
 def _pick_features(df: pd.DataFrame) -> list[str]:
     base_exclude = [
-        "race_id", "race_date", "race_name", "horse_id", "horse",
-        "trainer_id", "jockey_id", "position"
+        "race_id", "race_date", "race_name",
+        "horse_id", "horse",
+        "trainer_id", "jockey_id", "position",
+        # newly excluded race metadata
+        "race_class", "dist_m", "going", "rail"
     ]
+
+    # Features we explicitly want to drop (redundant or flatlined)
+    drop_features = {
+        # redundant transforms
+        "market_logit_min", "market_logit_max", "market_logit_diff",
+        "avg_weight_min", "avg_weight_max", "avg_weight_diff",
+        # sparse / noisy equipment flags
+        "has_windsurg_min", "has_windsurg_max", "has_windsurg_diff",
+        "windsurg_changed_min", "windsurg_changed_max", "windsurg_changed_diff",
+        "headgear_changed_min", "headgear_changed_max", "headgear_changed_diff",
+        "has_headgear_min", "has_headgear_max",
+        # weak pair flags
+        "same_trainer", "same_jockey",
+        # flatlined numerics
+        "time_last3_min", "time_last3_max", "time_last3_diff",
+        "dist_m_min", "dist_m_max", "dist_m_diff",
+        "field_size_diff",  # already captured in rel_draw
+    }
 
     # Standard numeric selection
     feats = [
         c for c in df.columns
-        if c not in base_exclude and pd.api.types.is_numeric_dtype(df[c])
+        if c not in base_exclude
+        and pd.api.types.is_numeric_dtype(df[c])
+        and c not in drop_features
     ]
 
-    # Always include Phase 1 features explicitly
+    # Always include core Phase 1 features explicitly
     must_have = ["rel_draw", "rel_weight", "market_prob", "market_logit"]
     for col in must_have:
         if col in df.columns and col not in feats:
             feats.append(col)
 
+    # Debug print
+    print(f"[pick_features] Selected {len(feats)} features:")
+    print("   " + ", ".join(feats))
+
     return feats
+
+
