@@ -1,0 +1,179 @@
+Found 16 races with missing odds data
+Processing only the first 5 races
+Processing race 1/5: rac_11749777 on 2025-09-17 at Happy Valley (HK)
+  ⚠️ Using default race number 1 for race ID: rac_11749777
+  Fetching odds for race 1 at HV on 2025-09-17
+  Found 13 runners in race data
+  Found 12 runners with odds
+    Runner #1: 8.6
+    Runner #2: 2.2
+    Runner #3: 28
+  Database has 14 runners for race rac_11749777
+  Updating runner #1 with odds 8.6 -> 8.6
+  Using horse_id hrs_21044835 for runner #1
+  Updating runner #2 with odds 2.2 -> 2.2
+  Using horse_id hrs_25095427 for runner #2
+  Updating runner #3 with odds 28 -> 28.0
+  Using horse_id hrs_29341025 for runner #3
+  Updating runner #4 with odds 26 -> 26.0
+  Using horse_id hrs_33390350 for runner #4
+  Updating runner #5 with odds 23 -> 23.0
+  Using horse_id hrs_33629680 for runner #5
+  Updating runner #6 with odds 32 -> 32.0
+  Using horse_id hrs_33904416 for runner #6
+  Updating runner #7 with odds 22 -> 22.0
+  Using horse_id hrs_38173541 for runner #7
+  Updating runner #8 with odds 22 -> 22.0
+  Using horse_id hrs_40244330 for runner #8
+  Updating runner #9 with odds 8.6 -> 8.6
+  Using horse_id hrs_41410243 for runner #9
+  Updating runner #10 with odds 11 -> 11.0
+  Using horse_id hrs_42296478 for runner #10
+  Updating runner #11 with odds 9.5 -> 9.5
+  Using horse_id hrs_42912604 for runner #11
+  Updating runner #12 with odds 8.8 -> 8.8
+  Using horse_id hrs_45760022 for runner #12
+  ✅ Updated 12 runners with odds data
+Processing race 2/5: rac_11749790 on 2025-09-17 at Happy Valley (HK)
+  ⚠️ Using default race number 1 for race ID: rac_11749790
+  Fetching odds for race 1 at HV on 2025-09-17
+  Found 13 runners in race data
+  Found 12 runners with odds
+    Runner #1: 8.6
+    Runner #2: 2.2
+    Runner #3: 28
+  Database has 14 runners for race rac_11749790
+  Updating runner #1 with odds 8.6 -> 8.6
+  Using horse_id hrs_27165894 for runner #1
+  Updating runner #2 with odds 2.2 -> 2.2
+  Using horse_id hrs_34486613 for runner #2
+  Updating runner #3 with odds 28 -> 28.0
+  Using horse_id hrs_34932275 for runner #3
+  Updating runner #4 with odds 26 -> 26.0
+  Using horse_id hrs_37096493 for runner #4
+  Updating runner #5 with odds 23 -> 23.0
+  Using horse_id hrs_37504670 for runner #5
+  Updating runner #6 with odds 32 -> 32.0
+  Using horse_id hrs_38017714 for runner #6
+  Updating runner #7 with odds 22 -> 22.0
+  Using horse_id hrs_38118934 for runner #7
+  Updating runner #8 with odds 22 -> 22.0
+  Using horse_id hrs_42296443 for runner #8
+  Updating runner #9 with odds 8.6 -> 8.6
+  Using horse_id hrs_45887093 for runner #9
+  Updating runner #10 with odds 11 -> 11.0
+  Using horse_id hrs_46944338 for runner #10
+  Updating runner #11 with odds 9.5 -> 9.5
+  Using horse_id hrs_47377015 for runner #11
+  Updating runner #12 with odds 8.8 -> 8.8
+  Using horse_id hrs_48323079 for runner #12
+  ✅ Updated 12 runners with odds data
+Processing race 3/5: rac_11749803 on 2025-09-17 at Happy Valley (HK)
+  ⚠️ Using default race number 1 for race ID: rac_11749803
+  Fetching odds for race 1 at HV on 2025-09-17
+  Found 13 runners in race data
+  Found 12 runners with odds
+    Runner #1: 8.6
+    Runner #2: 2.2
+    Runner #3: 28
+  Database has 14 runners for race rac_11749803
+  Updating runner #1 with odds 8.6 -> 8.6
+  Using horse_id hrs_23165814 for runner #1
+  Updating runner #2 with odds 2.2 -> 2.2
+  Using horse_id hrs_25550707 for runner #2
+  Updating runner #3 with odds 28 -> 28.0
+  Using horse_id hrs_27301337 for runner #3
+  Updating runner #4 with odds 26 -> 26.0
+  Using horse_id hrs_27820891 for runner #4
+  Updating runner #5 with odds 23 -> 23.0
+  Using horse_id hrs_33289193 for runner #5
+  Updating runner #6 with odds 32 -> 32.0
+  Using horse_id hrs_36665300 for runner #6
+  Updating runner #7 with odds 22 -> 22.0
+  Using horse_id hrs_38855628 for runner #7
+  Updating runner #8 with odds 22 -> 22.0
+  Using horse_id hrs_38943233 for runner #8
+  Updating runner #9 with odds 8.6 -> 8.6
+  Using horse_id hrs_39451167 for runner #9
+  Updating runner #10 with odds 11 -> 11.0
+  Using horse_id hrs_39919698 for runner #10
+  Updating runner #11 with odds 9.5 -> 9.5
+  Using horse_id hrs_41152755 for runner #11
+  Updating runner #12 with odds 8.8 -> 8.8
+  Using horse_id hrs_41410306 for runner #12
+  ✅ Updated 12 runners with odds data
+Processing race 4/5: rac_11749816 on 2025-09-17 at Happy Valley (HK)
+  ⚠️ Using default race number 1 for race ID: rac_11749816
+  Fetching odds for race 1 at HV on 2025-09-17
+  Found 13 runners in race data
+  Found 12 runners with odds
+    Runner #1: 8.6
+    Runner #2: 2.2
+    Runner #3: 28
+  Database has 9 runners for race rac_11749816
+  Updating runner #1 with odds 8.6 -> 8.6
+  Using horse_id hrs_23013305 for runner #1
+  Updating runner #2 with odds 2.2 -> 2.2
+  Using horse_id hrs_28532483 for runner #2
+  Updating runner #3 with odds 28 -> 28.0
+  Using horse_id hrs_28850990 for runner #3
+  Updating runner #4 with odds 26 -> 26.0
+  Using horse_id hrs_31644683 for runner #4
+  Updating runner #5 with odds 23 -> 23.0
+  Using horse_id hrs_32733589 for runner #5
+  Updating runner #6 with odds 32 -> 32.0
+  Using horse_id hrs_33496022 for runner #6
+  Updating runner #7 with odds 22 -> 22.0
+  Using horse_id hrs_35388654 for runner #7
+  Updating runner #8 with odds 22 -> 22.0
+  Using horse_id hrs_36234702 for runner #8
+  Updating runner #9 with odds 8.6 -> 8.6
+  Using horse_id hrs_48700372 for runner #9
+  Updating runner #10 with odds 11 -> 11.0
+  ⚠️ Runner #10 is out of range for race rac_11749816
+  Updating runner #11 with odds 9.5 -> 9.5
+  ⚠️ Runner #11 is out of range for race rac_11749816
+  Updating runner #12 with odds 8.8 -> 8.8
+  ⚠️ Runner #12 is out of range for race rac_11749816
+  ✅ Updated 9 runners with odds data
+Processing race 5/5: rac_11749829 on 2025-09-17 at Happy Valley (HK)
+  ⚠️ Using default race number 1 for race ID: rac_11749829
+  Fetching odds for race 1 at HV on 2025-09-17
+  Found 13 runners in race data
+  Found 12 runners with odds
+    Runner #1: 8.6
+    Runner #2: 2.2
+    Runner #3: 28
+  Database has 14 runners for race rac_11749829
+  Updating runner #1 with odds 8.6 -> 8.6
+  Using horse_id hrs_24770249 for runner #1
+  Updating runner #2 with odds 2.2 -> 2.2
+  Using horse_id hrs_34830635 for runner #2
+  Updating runner #3 with odds 28 -> 28.0
+  Using horse_id hrs_36402506 for runner #3
+  Updating runner #4 with odds 26 -> 26.0
+  Using horse_id hrs_37821203 for runner #4
+  Updating runner #5 with odds 23 -> 23.0
+  Using horse_id hrs_38017672 for runner #5
+  Updating runner #6 with odds 32 -> 32.0
+  Using horse_id hrs_39061715 for runner #6
+  Updating runner #7 with odds 22 -> 22.0
+  Using horse_id hrs_39568984 for runner #7
+  Updating runner #8 with odds 22 -> 22.0
+  Using horse_id hrs_46295557 for runner #8
+  Updating runner #9 with odds 8.6 -> 8.6
+  Using horse_id hrs_46634602 for runner #9
+  Updating runner #10 with odds 11 -> 11.0
+  Using horse_id hrs_50369340 for runner #10
+  Updating runner #11 with odds 9.5 -> 9.5
+  Using horse_id hrs_50935661 for runner #11
+  Updating runner #12 with odds 8.8 -> 8.8
+  Using horse_id hrs_52086846 for runner #12
+  ✅ Updated 12 runners with odds data
+
+=== Summary Report ===
+Total races processed: 5
+Total runners updated: 57
+Failed races: 0
+
+Races still missing odds: 15
