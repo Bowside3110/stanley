@@ -214,6 +214,132 @@ def _add_market_probs(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ---------------- Odds-based metrics ----------------
+
+def horse_odds_efficiency(df: pd.DataFrame) -> pd.Series:
+    """
+    Calculate the difference between actual results and market expectation for each horse.
+    
+    Formula: efficiency = mean(position <= 2) - mean(1/win_odds)
+    
+    Parameters:
+        df: DataFrame with horse_id, position, and win_odds columns
+        
+    Returns:
+        Series aligned with df index containing efficiency scores
+    """
+    # Ensure numeric types
+    win_odds = pd.to_numeric(df['win_odds'], errors='coerce')
+    position = pd.to_numeric(df['position'], errors='coerce')
+    
+    # Calculate market probability (1/odds)
+    market_prob = 1 / win_odds.replace(0, np.nan)
+    
+    # Calculate actual performance (placed in top 2)
+    actual_perf = position.fillna(999) <= 2
+    
+    # Group by horse_id and calculate efficiency - using a two-step approach to avoid warnings
+    # 1. Calculate actual performance (placed in top 2) for each horse
+    actual_perf_by_horse = df.groupby('horse_id')['position'].apply(
+        lambda x: (x.fillna(999) <= 2).mean()
+    )
+    # 2. Calculate market expectation for each horse
+    market_exp_by_horse = df.groupby('horse_id')['win_odds'].apply(
+        lambda x: (1 / x.replace(0, np.nan)).mean()
+    )
+    # 3. Calculate efficiency as the difference
+    horse_eff = actual_perf_by_horse - market_exp_by_horse
+    
+    # Map back to original DataFrame index
+    result = df['horse_id'].map(horse_eff)
+    
+    # Log stats for debugging
+    min_val = result.min()
+    max_val = result.max()
+    mean_val = result.mean()
+    print(f"[horse_odds_efficiency] min={min_val:.4f}, max={max_val:.4f}, mean={mean_val:.4f}")
+    
+    return result
+
+def horse_odds_trend(df: pd.DataFrame) -> pd.Series:
+    """
+    Calculate the ratio of current odds to the 3-race rolling average of win_odds.
+    
+    Formula: win_odds / rolling_avg_last3_odds
+    
+    Parameters:
+        df: DataFrame with horse_id, race_date, and win_odds columns
+        
+    Returns:
+        Series aligned with df index containing odds trend ratios
+    """
+    # Ensure numeric types and sort
+    df_sorted = df.copy()
+    df_sorted['win_odds'] = pd.to_numeric(df_sorted['win_odds'], errors='coerce')
+    df_sorted = df_sorted.sort_values(['horse_id', 'race_date'])
+    
+    # Calculate rolling average of win_odds for each horse
+    rolling_odds = df_sorted.groupby('horse_id')['win_odds'].transform(
+        lambda x: x.rolling(window=3, min_periods=1).mean().shift(1)
+    )
+    
+    # Calculate the ratio (current odds / rolling average)
+    # Fill missing or zero denominators with 1
+    ratio = df_sorted['win_odds'] / rolling_odds.replace(0, 1).fillna(1)
+    
+    # Log stats for debugging
+    min_val = ratio.min()
+    max_val = ratio.max()
+    mean_val = ratio.mean()
+    print(f"[horse_odds_trend] min={min_val:.4f}, max={max_val:.4f}, mean={mean_val:.4f}")
+    
+    return ratio
+
+def trainer_odds_bias(df: pd.DataFrame) -> pd.Series:
+    """
+    Calculate the average difference between actual outcomes and market probabilities for each trainer.
+    
+    Formula: bias = mean(position <= 2) - mean(1/win_odds)
+    
+    Parameters:
+        df: DataFrame with trainer_id, position, and win_odds columns
+        
+    Returns:
+        Series aligned with df index containing bias scores
+    """
+    # Ensure numeric types
+    win_odds = pd.to_numeric(df['win_odds'], errors='coerce')
+    position = pd.to_numeric(df['position'], errors='coerce')
+    
+    # Calculate market probability (1/odds)
+    market_prob = 1 / win_odds.replace(0, np.nan)
+    
+    # Calculate actual performance (placed in top 2)
+    actual_perf = position.fillna(999) <= 2
+    
+    # Group by trainer_id and calculate bias - using a two-step approach to avoid warnings
+    # 1. Calculate actual performance (placed in top 2) for each trainer
+    actual_perf_by_trainer = df.groupby('trainer_id')['position'].apply(
+        lambda x: (x.fillna(999) <= 2).mean()
+    )
+    # 2. Calculate market expectation for each trainer
+    market_exp_by_trainer = df.groupby('trainer_id')['win_odds'].apply(
+        lambda x: (1 / x.replace(0, np.nan)).mean()
+    )
+    # 3. Calculate bias as the difference
+    trainer_bias = actual_perf_by_trainer - market_exp_by_trainer
+    
+    # Map back to original DataFrame index
+    result = df['trainer_id'].map(trainer_bias)
+    
+    # Log stats for debugging
+    min_val = result.min()
+    max_val = result.max()
+    mean_val = result.mean()
+    print(f"[trainer_odds_bias] min={min_val:.4f}, max={max_val:.4f}, mean={mean_val:.4f}")
+    
+    return result
+
 # ---------------- Rolling form ----------------
 
 def _add_rolling_form(df: pd.DataFrame) -> pd.DataFrame:
@@ -248,6 +374,39 @@ def _add_rolling_form(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ---------------- Odds-history metrics ----------------
+
+def _add_odds_history_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add odds-based historical metrics to the DataFrame.
+    
+    Adds three new columns:
+    - horse_odds_efficiency: Difference between actual results and market expectation for each horse
+    - horse_odds_trend: Ratio of current odds to 3-race rolling average of win_odds
+    - trainer_odds_bias: Difference between actual outcomes and market probabilities for each trainer
+    
+    Parameters:
+        df: DataFrame with required columns (horse_id, trainer_id, position, win_odds, race_date)
+        
+    Returns:
+        DataFrame with added columns
+    """
+    # Calculate horse odds efficiency
+    df['horse_odds_efficiency'] = horse_odds_efficiency(df).fillna(0)
+    
+    # Calculate horse odds trend
+    df['horse_odds_trend'] = horse_odds_trend(df).fillna(1)
+    
+    # Calculate trainer odds bias
+    df['trainer_odds_bias'] = trainer_odds_bias(df).fillna(0)
+    
+    # Print debug summary
+    print("✅ Added odds-history features:")
+    print(df[['horse_odds_efficiency', 'horse_odds_trend', 'trainer_odds_bias']].describe())
+    
+    return df
+
+
 # ---------------- Public entrypoint ----------------
 
 def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
@@ -266,6 +425,9 @@ def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
 
         # --- Phase 2 rolling form ---
         df = _add_rolling_form(df)
+        
+        # --- Phase 3 odds-history metrics ---
+        df = _add_odds_history_metrics(df)
 
         df["__ord"] = df["draw"].fillna(9999)
         df = df.sort_values(["race_id", "__ord", "horse_id"]).drop(columns="__ord")
@@ -313,7 +475,12 @@ def _pick_features(df: pd.DataFrame) -> list[str]:
     ]
 
     # Always include core Phase 1 features explicitly
-    must_have = ["rel_draw", "rel_weight", "market_prob", "market_logit"]
+    must_have = [
+        # Core Phase 1 features
+        "rel_draw", "rel_weight", "market_prob", "market_logit",
+        # Phase 3 odds-history metrics
+        "horse_odds_efficiency", "horse_odds_trend", "trainer_odds_bias"
+    ]
     for col in must_have:
         if col in df.columns and col not in feats:
             feats.append(col)
@@ -323,5 +490,88 @@ def _pick_features(df: pd.DataFrame) -> list[str]:
     print("   " + ", ".join(feats))
 
     return feats
+
+
+# ---------------- Test code ----------------
+
+if __name__ == "__main__":
+    # Simple test for the odds-based metrics functions
+    import pandas as pd
+    import numpy as np
+    
+    # Create a test DataFrame
+    test_data = {
+        'race_id': ['R1', 'R1', 'R1', 'R2', 'R2', 'R2', 'R3', 'R3', 'R3'],
+        'race_date': pd.to_datetime(['2025-01-01', '2025-01-01', '2025-01-01', 
+                                     '2025-01-08', '2025-01-08', '2025-01-08',
+                                     '2025-01-15', '2025-01-15', '2025-01-15']),
+        'horse_id': ['H1', 'H2', 'H3', 'H1', 'H2', 'H3', 'H1', 'H2', 'H3'],
+        'position': [1, 3, 2, 5, 1, 4, 2, 6, 1],
+        'win_odds': [5.0, 10.0, 3.0, 4.0, 8.0, 12.0, 3.5, 15.0, 6.0],
+        'trainer_id': ['T1', 'T2', 'T1', 'T1', 'T2', 'T3', 'T1', 'T2', 'T3']
+    }
+    
+    test_df = pd.DataFrame(test_data)
+    
+    print("\n----- Testing odds-based metrics functions -----")
+    
+    # Test horse_odds_efficiency
+    print("\nTesting horse_odds_efficiency:")
+    horse_eff = horse_odds_efficiency(test_df)
+    print(f"Horse efficiency values:\n{horse_eff.to_dict()}")
+    
+    # Test horse_odds_trend
+    print("\nTesting horse_odds_trend:")
+    horse_trend = horse_odds_trend(test_df)
+    print(f"Horse odds trend values:\n{horse_trend.to_dict()}")
+    
+    # Test trainer_odds_bias
+    print("\nTesting trainer_odds_bias:")
+    trainer_bias = trainer_odds_bias(test_df)
+    print(f"Trainer bias values:\n{trainer_bias.to_dict()}")
+    
+    # Test integration in feature building
+    print("\n----- Testing integration in build_features() -----")
+    try:
+        print("\nTesting with small test DataFrame:")
+        # Add required columns for build_features pipeline
+        test_df['draw'] = [1, 2, 3, 1, 2, 3, 1, 2, 3]
+        test_df['weight'] = [120, 118, 122, 121, 119, 123, 119, 117, 121]
+        test_df['jockey_id'] = ['J1', 'J2', 'J3', 'J1', 'J2', 'J3', 'J1', 'J2', 'J3']
+        test_df['course'] = 'ST'
+        
+        # Apply odds history metrics
+        result_df = _add_odds_history_metrics(test_df)
+        
+        # Check if columns were added
+        new_cols = ['horse_odds_efficiency', 'horse_odds_trend', 'trainer_odds_bias']
+        for col in new_cols:
+            if col in result_df.columns:
+                print(f"✓ Column '{col}' successfully added")
+            else:
+                print(f"✗ Column '{col}' missing!")
+        
+        print("\nTrying to load real data (if available):")
+        # Try to load real data if available (will fail gracefully if not)
+        try:
+            import os
+            if os.path.exists("data/historical/hkjc.db"):
+                print("Real database found, testing with actual data...")
+                real_df = build_features()
+                
+                # Check if columns were added
+                for col in new_cols:
+                    if col in real_df.columns:
+                        print(f"✓ Column '{col}' successfully added to real data")
+                        print(f"  Sample values: {real_df[col].head(3).tolist()}")
+                    else:
+                        print(f"✗ Column '{col}' missing from real data!")
+            else:
+                print("Real database not found, skipping test with actual data")
+        except Exception as e:
+            print(f"Error testing with real data: {e}")
+            
+    except Exception as e:
+        print(f"Error during integration test: {e}")
 
 
