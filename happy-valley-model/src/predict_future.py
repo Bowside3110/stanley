@@ -184,7 +184,9 @@ def calculate_performance_metrics(df_test, predictions, gold):
 
 
 # ----- Main prediction -----
-def predict_future(db_path: str, race_date: str, top_box: int = 5, save_csv: str | None = None, compare_baseline: bool = False, max_validation_races: int = 500, save_model: bool = True):
+def predict_future(db_path: str, race_date: str, top_box: int = 5, save_csv: str | None = None, 
+                   compare_baseline: bool = False, max_validation_races: int = 500, save_model: bool = True,
+                   future_mode: bool = True):
     print(f"Predicting races for {race_date} using database {db_path}...")
 
     if compare_baseline:
@@ -213,6 +215,37 @@ def predict_future(db_path: str, race_date: str, top_box: int = 5, save_csv: str
     if race_date:
         race_date = pd.to_datetime(race_date).date()
         df_future = df_future[df_future["race_date"].dt.date == race_date]
+        
+    # Special handling for future races where all horses are first-time runners
+    if future_mode and 'is_first_time_runner' in df_future.columns:
+        first_time_pct = df_future['is_first_time_runner'].mean() * 100
+        if first_time_pct > 95:  # If more than 95% are first-time runners
+            print(f"    ⚠️ Warning: {first_time_pct:.1f}% of future horses are first-time runners!")
+            print("    Adjusting predictions to rely more on market odds and less on historical metrics...")
+            
+            # For future races, adjust the first_time_penalty to be less severe
+            # This helps when all horses are first-time runners
+            if 'first_time_penalty' in df_future.columns:
+                df_future['first_time_penalty'] = df_future['first_time_penalty'] * 0.5  # Reduce penalty by half
+                
+            # Make market odds a stronger factor for these races
+            if 'market_prob' in df_future.columns:
+                # Scale market probability to have more influence
+                df_future['market_prob_scaled'] = df_future['market_prob'] * 1.5
+                print("    Added market_prob_scaled feature to increase odds influence")
+                
+            # Add a random component based on draw for variety
+            if 'draw' in df_future.columns:
+                # Convert draw to numeric if it's not already
+                if not pd.api.types.is_numeric_dtype(df_future['draw']):
+                    df_future['draw'] = pd.to_numeric(df_future['draw'], errors='coerce')
+                
+                # Create a small random factor based on draw
+                np.random.seed(42)  # For reproducibility
+                df_future['draw_factor'] = df_future['draw'].apply(
+                    lambda x: np.random.normal(0, 0.05) if pd.isna(x) else np.random.normal(0, 0.05, 1)[0]
+                )
+                print("    Added draw_factor for slight randomization in all-first-time fields")
 
     if df_future.empty:
         print(f"No future races found for {race_date}")
@@ -254,6 +287,15 @@ def predict_future(db_path: str, race_date: str, top_box: int = 5, save_csv: str
     
     # Select features for the enhanced model
     runner_feats = _pick_features(df_train_subset)
+    
+    # Add the new market_prob_scaled and draw_factor features if they exist in df_future
+    if 'market_prob_scaled' in df_future.columns and 'market_prob_scaled' not in runner_feats:
+        runner_feats.append('market_prob_scaled')
+        print("    Added market_prob_scaled to feature list")
+        
+    if 'draw_factor' in df_future.columns and 'draw_factor' not in runner_feats:
+        runner_feats.append('draw_factor')
+        print("    Added draw_factor to feature list")
     
     # Verify inclusion of odds-history metrics
     odds_features = ["horse_odds_efficiency", "horse_odds_trend", "trainer_odds_bias"]
@@ -735,6 +777,8 @@ if __name__ == "__main__":
                     help="Maximum number of races to use for validation (default=500)")
     ap.add_argument("--save_model", action="store_true", default=True,
                     help="Save the trained model for later analysis (default=True)")
+    ap.add_argument("--no_future_mode", action="store_false", dest="future_mode", default=True,
+                    help="Disable special handling for future races (default: enabled)")
     args = ap.parse_args()
 
     predict_future(
@@ -744,5 +788,6 @@ if __name__ == "__main__":
         save_csv=args.save_csv, 
         compare_baseline=args.compare_baseline,
         max_validation_races=args.max_validation_races,
-        save_model=args.save_model
+        save_model=args.save_model,
+        future_mode=args.future_mode
     )

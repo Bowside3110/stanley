@@ -380,7 +380,8 @@ def _add_odds_history_metrics(df: pd.DataFrame) -> pd.DataFrame:
     """
     Add odds-based historical metrics to the DataFrame.
     
-    Adds three new columns:
+    Adds four columns:
+    - is_first_time_runner: Indicator for horses with no previous runs
     - horse_odds_efficiency: Difference between actual results and market expectation for each horse
     - horse_odds_trend: Ratio of current odds to 3-race rolling average of win_odds
     - trainer_odds_bias: Difference between actual outcomes and market probabilities for each trainer
@@ -391,18 +392,40 @@ def _add_odds_history_metrics(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with added columns
     """
+    # Add first-time runner indicator
+    df['is_first_time_runner'] = df['last_run'].isna().astype(int)
+    
     # Calculate horse odds efficiency
-    df['horse_odds_efficiency'] = horse_odds_efficiency(df).fillna(0)
+    df['horse_odds_efficiency'] = horse_odds_efficiency(df)
     
     # Calculate horse odds trend
-    df['horse_odds_trend'] = horse_odds_trend(df).fillna(1)
+    df['horse_odds_trend'] = horse_odds_trend(df)
     
     # Calculate trainer odds bias
-    df['trainer_odds_bias'] = trainer_odds_bias(df).fillna(0)
+    df['trainer_odds_bias'] = trainer_odds_bias(df)
+    
+    # Recalibrate default values for missing odds-history metrics using population statistics
+    # instead of fixed values (0, 1, 0)
+    df['horse_odds_efficiency'] = df['horse_odds_efficiency'].fillna(df['horse_odds_efficiency'].mean())
+    df['horse_odds_trend'] = df['horse_odds_trend'].fillna(df['horse_odds_trend'].median())
+    df['trainer_odds_bias'] = df['trainer_odds_bias'].fillna(df['trainer_odds_bias'].mean())
+    
+    # Apply a strong penalty for first-time runners (uncertainty discount)
+    # This significantly reduces the model's bias toward first-time runners
+    df.loc[df['is_first_time_runner'] == 1, 'horse_odds_efficiency'] -= 0.25  # Stronger penalty
+    
+    # Create a derived feature that explicitly penalizes first-time runners in model scoring
+    # This helps the model learn that first-time runners should generally be ranked lower
+    df['first_time_penalty'] = df['is_first_time_runner'] * -0.5
     
     # Print debug summary
     print("✅ Added odds-history features:")
-    print(df[['horse_odds_efficiency', 'horse_odds_trend', 'trainer_odds_bias']].describe())
+    print(df[['is_first_time_runner', 'first_time_penalty', 'horse_odds_efficiency', 'horse_odds_trend', 'trainer_odds_bias']].describe())
+    
+    # Print first-time runner stats
+    first_timers = df['is_first_time_runner'].sum()
+    total_horses = len(df)
+    print(f"First-time runners: {first_timers} ({first_timers/total_horses*100:.1f}% of total)")
     
     return df
 
@@ -479,7 +502,9 @@ def _pick_features(df: pd.DataFrame) -> list[str]:
         # Core Phase 1 features
         "rel_draw", "rel_weight", "market_prob", "market_logit",
         # Phase 3 odds-history metrics
-        "horse_odds_efficiency", "horse_odds_trend", "trainer_odds_bias"
+        "horse_odds_efficiency", "horse_odds_trend", "trainer_odds_bias",
+        # First-time runner features
+        "is_first_time_runner", "first_time_penalty"
     ]
     for col in must_have:
         if col in df.columns and col not in feats:
