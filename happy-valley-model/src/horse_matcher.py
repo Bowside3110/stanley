@@ -2,8 +2,9 @@
 
 from difflib import SequenceMatcher
 import re
+import numpy as np
 
-def normalize_horse_name(name: str) -> str:
+def normalize_horse_name(name) -> str:
     """
     Normalize horse name for matching.
     - Lowercase
@@ -16,7 +17,18 @@ def normalize_horse_name(name: str) -> str:
         "Lucky Star" -> "lucky star"
         "Ka Ying Star (IRE)" -> "ka ying star"
     """
-    if not name:
+    # Handle None, NaN, or float values
+    if name is None:
+        return ""
+    if isinstance(name, float) and np.isnan(name):
+        return ""
+        
+    # Convert to string if it's not already
+    if not isinstance(name, str):
+        name = str(name).strip()
+        
+    # Return empty string if the result is empty or equals 'nan'
+    if not name or name.lower() == 'nan':
         return ""
     
     # Remove country suffix pattern BEFORE lowercasing: (XXX) at the end
@@ -35,71 +47,75 @@ def normalize_horse_name(name: str) -> str:
     return name.strip()
 
 
-def fuzzy_match_horse(target_name: str, candidate_names: dict, threshold: float = 0.85) -> tuple:
+def fuzzy_match_horse(target_name: str, name_to_ids_index: dict, threshold: float = 0.85) -> tuple:
     """
     Find the best matching horse from candidates using fuzzy matching.
     
     Args:
         target_name: The horse name to match (e.g., "Heavenly Thought" or "Heavenly Thought (AUS)")
-        candidate_names: Dict of {horse_id: horse_name} to search through
+        name_to_ids_index: Dict of {normalized_name: [list of horse_ids]} to search through
         threshold: Minimum similarity score (0-1) to consider a match
         
     Returns:
-        Tuple of (matched_horse_id, confidence_score) or (None, 0.0)
+        Tuple of (normalized_name, confidence_score) or (None, 0.0)
     """
     target_norm = normalize_horse_name(target_name)
     
     if not target_norm:
         return None, 0.0
     
-    best_match_id = None
+    # Try exact match first (fast path)
+    if target_norm in name_to_ids_index:
+        return target_norm, 1.0
+    
+    # Fuzzy match using SequenceMatcher
+    best_match_name = None
     best_score = 0.0
     
-    for horse_id, horse_name in candidate_names.items():
-        candidate_norm = normalize_horse_name(horse_name)
-        
-        if not candidate_norm:
-            continue
-            
-        # Try exact match first (fast path)
-        if target_norm == candidate_norm:
-            return horse_id, 1.0
-        
-        # Fuzzy match using SequenceMatcher
+    for candidate_norm in name_to_ids_index.keys():
         score = SequenceMatcher(None, target_norm, candidate_norm).ratio()
         
         if score > best_score and score >= threshold:
             best_score = score
-            best_match_id = horse_id
+            best_match_name = candidate_norm
     
-    return best_match_id, best_score
+    return best_match_name, best_score
 
 
 def build_horse_name_index(conn) -> dict:
     """
-    Build an index of all historical horses from the database.
-    Returns dict of {horse_id: horse_name}
+    Build an index mapping normalized horse names to lists of horse IDs.
+    Returns dict of {normalized_name: [horse_id1, horse_id2, ...]}
+    
+    This handles cases where the same horse appears with different name variations
+    (e.g., "Heavenly Thought" vs "Heavenly Thought (AUS)").
     """
     import pandas as pd
     
-    # Query all unique horses from historical results
-    # We want horses that have actually raced (have results)
+    # Query all unique horses from runners table
     query = """
-    SELECT DISTINCT r.horse_id, r.horse
-    FROM runners r
-    WHERE r.horse_id IS NOT NULL 
-      AND r.horse IS NOT NULL
-      AND r.horse != ''
+    SELECT DISTINCT horse_id, horse
+    FROM runners
+    WHERE horse_id IS NOT NULL 
+      AND horse IS NOT NULL
+      AND horse != ''
     """
     
     df = pd.read_sql_query(query, conn)
     
-    # Create dictionary
-    horse_index = dict(zip(df['horse_id'], df['horse']))
+    # Build mapping from normalized name to list of horse IDs
+    name_to_ids = {}
+    for _, row in df.iterrows():
+        normalized = normalize_horse_name(row['horse'])
+        if normalized:
+            if normalized not in name_to_ids:
+                name_to_ids[normalized] = []
+            name_to_ids[normalized].append(row['horse_id'])
     
-    print(f"Built horse name index with {len(horse_index)} unique horses")
+    total_ids = sum(len(ids) for ids in name_to_ids.values())
+    print(f"Built horse name index with {len(name_to_ids)} unique normalized names mapping to {total_ids} horse IDs")
     
-    return horse_index
+    return name_to_ids
 
 
 def test_normalization():

@@ -3,6 +3,12 @@ from __future__ import annotations
 import sqlite3
 import numpy as np
 import pandas as pd
+from src.horse_matcher import normalize_horse_name, fuzzy_match_horse, build_horse_name_index
+
+
+# ---------------- Global cache for horse matching ----------------
+_HORSE_MATCH_CACHE = {}
+_HORSE_NAME_INDEX = None
 
 
 # ---------------- Helpers ----------------
@@ -93,9 +99,13 @@ def _base_frame(conn: sqlite3.Connection) -> pd.DataFrame:
     # ✅ Only filter by status for future races (no result yet)
     if "status" in df.columns:
         mask_future = df["position"].isna()
-        df.loc[mask_future] = df.loc[mask_future].loc[
-            df.loc[mask_future, "status"].str.lower() == "declared"
-        ]
+        
+        # For future races (no position), only keep declared horses
+        # Accept: "declared", "Declared", "DECLARED" (case-insensitive)
+        # Exclude: "Scratched", "STOP_SELL", "REFUND_BEFORE_CLOSE", etc.
+        mask_declared = df["status"].str.lower() == "declared"
+        # Keep all historical races OR future declared races
+        df = df[~mask_future | mask_declared].copy()
 
     return df
 
@@ -214,131 +224,267 @@ def _add_market_probs(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ---------------- Odds-based metrics ----------------
+# ---------------- Horse Matching ----------------
 
-def horse_odds_efficiency(df: pd.DataFrame) -> pd.Series:
+def _match_horses_to_historical(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.DataFrame:
     """
-    Calculate the difference between actual results and market expectation for each horse.
+    Match horses in current DataFrame to historical horses using name-based fuzzy matching.
+    Adds columns: matched_historical_id (normalized name), match_confidence
+    """
+    global _HORSE_MATCH_CACHE, _HORSE_NAME_INDEX
     
-    Formula: efficiency = mean(position <= 2) - mean(1/win_odds)
+    # Build horse name index if not already built
+    if _HORSE_NAME_INDEX is None:
+        _HORSE_NAME_INDEX = build_horse_name_index(conn)
     
-    Parameters:
-        df: DataFrame with horse_id, position, and win_odds columns
+    # Initialize columns
+    df['matched_historical_id'] = None
+    df['match_confidence'] = 0.0
+    
+    match_stats = {'exact': 0, 'fuzzy': 0, 'no_match': 0}
+    
+    for idx, row in df.iterrows():
+        current_horse_id = row['horse_id']
+        current_horse_name = row.get('horse', '')
         
-    Returns:
-        Series aligned with df index containing efficiency scores
+        # Check cache first
+        if current_horse_id in _HORSE_MATCH_CACHE:
+            match_name, confidence = _HORSE_MATCH_CACHE[current_horse_id]
+            df.at[idx, 'matched_historical_id'] = match_name
+            df.at[idx, 'match_confidence'] = confidence
+            continue
+        
+        # Try to match by normalizing the current horse name
+        if current_horse_name:
+            normalized_name = normalize_horse_name(current_horse_name)
+            
+            # Check if this normalized name exists in our index
+            if normalized_name and normalized_name in _HORSE_NAME_INDEX:
+                _HORSE_MATCH_CACHE[current_horse_id] = (normalized_name, 1.0)
+                df.at[idx, 'matched_historical_id'] = normalized_name
+                df.at[idx, 'match_confidence'] = 1.0
+                match_stats['exact'] += 1
+                continue
+            
+            # Fuzzy match by name
+            if _HORSE_NAME_INDEX:
+                match_name, confidence = fuzzy_match_horse(
+                    current_horse_name, 
+                    _HORSE_NAME_INDEX,
+                    threshold=0.85
+                )
+                
+                # Cache the result
+                _HORSE_MATCH_CACHE[current_horse_id] = (match_name, confidence)
+                df.at[idx, 'matched_historical_id'] = match_name
+                df.at[idx, 'match_confidence'] = confidence
+                
+                if match_name:
+                    if confidence >= 0.95:
+                        match_stats['exact'] += 1
+                    else:
+                        match_stats['fuzzy'] += 1
+                        print(f"  ⚠️  Fuzzy matched '{current_horse_name}' → '{match_name}' ({confidence:.2f})")
+                else:
+                    match_stats['no_match'] += 1
+            else:
+                match_stats['no_match'] += 1
+        else:
+            match_stats['no_match'] += 1
+    
+    # Print matching statistics
+    total = sum(match_stats.values())
+    if total > 0:
+        print(f"\n✅ Horse Matching Results:")
+        print(f"   Exact matches: {match_stats['exact']} ({match_stats['exact']/total*100:.1f}%)")
+        print(f"   Fuzzy matches: {match_stats['fuzzy']} ({match_stats['fuzzy']/total*100:.1f}%)")
+        print(f"   No matches (first-time): {match_stats['no_match']} ({match_stats['no_match']/total*100:.1f}%)")
+    
+    return df
+
+
+# ---------------- Odds-based metrics (with matching) ----------------
+
+def _calculate_horse_odds_efficiency(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.Series:
     """
-    # Ensure numeric types
-    win_odds = pd.to_numeric(df['win_odds'], errors='coerce')
-    position = pd.to_numeric(df['position'], errors='coerce')
+    Calculate odds efficiency using normalized horse names and all matching IDs.
+    Returns efficiency score for each horse.
+    """
+    global _HORSE_NAME_INDEX
     
-    # Calculate market probability (1/odds)
-    market_prob = 1 / win_odds.replace(0, np.nan)
+    # Get unique normalized names for horses that have been matched
+    matched_normalized_names = df[df['matched_historical_id'].notna()]['matched_historical_id'].unique().tolist()
     
-    # Calculate actual performance (placed in top 2)
-    actual_perf = position.fillna(999) <= 2
+    if not matched_normalized_names or conn is None or _HORSE_NAME_INDEX is None:
+        return pd.Series([np.nan] * len(df), index=df.index)
     
-    # Group by horse_id and calculate efficiency - using a two-step approach to avoid warnings
-    # 1. Calculate actual performance (placed in top 2) for each horse
-    actual_perf_by_horse = df.groupby('horse_id')['position'].apply(
-        lambda x: (x.fillna(999) <= 2).mean()
-    )
-    # 2. Calculate market expectation for each horse
-    market_exp_by_horse = df.groupby('horse_id')['win_odds'].apply(
-        lambda x: (1 / x.replace(0, np.nan)).mean()
-    )
-    # 3. Calculate efficiency as the difference
-    horse_eff = actual_perf_by_horse - market_exp_by_horse
+    # Collect all horse IDs that match these normalized names
+    all_horse_ids = []
+    for norm_name in matched_normalized_names:
+        if norm_name in _HORSE_NAME_INDEX:
+            all_horse_ids.extend(_HORSE_NAME_INDEX[norm_name])
     
-    # Map back to original DataFrame index
-    result = df['horse_id'].map(horse_eff)
+    if not all_horse_ids:
+        return pd.Series([np.nan] * len(df), index=df.index)
     
-    # Log stats for debugging
-    min_val = result.min()
-    max_val = result.max()
-    mean_val = result.mean()
-    print(f"[horse_odds_efficiency] min={min_val:.4f}, max={max_val:.4f}, mean={mean_val:.4f}")
+    # Query historical performance using horse IDs
+    placeholders = ','.join('?' * len(all_horse_ids))
+    query = f"""
+    SELECT r.horse_id, r.horse, r.position, r.win_odds
+    FROM runners r
+    WHERE r.horse_id IN ({placeholders})
+      AND r.position IS NOT NULL
+      AND r.win_odds IS NOT NULL
+      AND r.win_odds > 0
+    """
+    
+    hist_df = pd.read_sql_query(query, conn, params=all_horse_ids)
+    
+    print(f"\n[DEBUG efficiency] Queried {len(all_horse_ids)} horse IDs from {len(matched_normalized_names)} normalized names, got {len(hist_df)} historical rows")
+    
+    # Convert win_odds to numeric and handle non-numeric values
+    hist_df['win_odds'] = pd.to_numeric(hist_df['win_odds'], errors='coerce')
+    
+    # Filter out rows where win_odds is NaN
+    hist_df = hist_df[hist_df['win_odds'].notna()]
+    
+    if hist_df.empty:
+        return pd.Series([np.nan] * len(df), index=df.index)
+    
+    # Convert position to numeric, coercing non-numeric values (DSQ, PU, etc.) to NaN
+    hist_df['position'] = pd.to_numeric(hist_df['position'], errors='coerce')
+    
+    # Filter out rows where position couldn't be converted
+    hist_df = hist_df[hist_df['position'].notna()]
+    
+    # Check if we still have data after filtering
+    if hist_df.empty:
+        return pd.Series([np.nan] * len(df), index=df.index)
+    
+    # Normalize horse names in historical data to group by normalized name
+    hist_df['normalized_name'] = hist_df['horse'].apply(normalize_horse_name)
+    
+    print(f"[DEBUG efficiency] After filtering: {len(hist_df)} rows, {hist_df['normalized_name'].nunique()} unique normalized names")
+    
+    # Calculate efficiency per normalized horse name
+    hist_df['placed_top2'] = (hist_df['position'] <= 2).astype(int)
+    hist_df['market_prob'] = 1 / hist_df['win_odds']
+    
+    efficiency = hist_df.groupby('normalized_name').agg({
+        'placed_top2': 'mean',
+        'market_prob': 'mean'
+    })
+    efficiency['efficiency'] = efficiency['placed_top2'] - efficiency['market_prob']
+    
+    print(f"[DEBUG efficiency] Calculated efficiency for {len(efficiency)} normalized names")
+    print(f"[DEBUG efficiency] Sample efficiency values:\n{efficiency['efficiency'].head(10)}")
+    
+    # Map back to original DataFrame using matched_historical_id (which is the normalized name)
+    result = df['matched_historical_id'].map(efficiency['efficiency'])
     
     return result
 
-def horse_odds_trend(df: pd.DataFrame) -> pd.Series:
+
+def _calculate_horse_odds_trend(df: pd.DataFrame, conn: sqlite3.Connection) -> pd.Series:
     """
-    Calculate the ratio of current odds to the 3-race rolling average of win_odds.
-    
-    Formula: win_odds / rolling_avg_last3_odds
-    
-    Parameters:
-        df: DataFrame with horse_id, race_date, and win_odds columns
-        
-    Returns:
-        Series aligned with df index containing odds trend ratios
+    Calculate odds trend (current odds / rolling avg) using normalized horse names and all matching IDs.
     """
-    # Ensure numeric types and sort
-    df_sorted = df.copy()
-    df_sorted['win_odds'] = pd.to_numeric(df_sorted['win_odds'], errors='coerce')
-    df_sorted = df_sorted.sort_values(['horse_id', 'race_date'])
+    global _HORSE_NAME_INDEX
     
-    # Calculate rolling average of win_odds for each horse
-    rolling_odds = df_sorted.groupby('horse_id')['win_odds'].transform(
-        lambda x: x.rolling(window=3, min_periods=1).mean().shift(1)
+    # Get unique normalized names for horses that have been matched
+    matched_normalized_names = df[df['matched_historical_id'].notna()]['matched_historical_id'].unique().tolist()
+    
+    if not matched_normalized_names or conn is None or _HORSE_NAME_INDEX is None:
+        return pd.Series([np.nan] * len(df), index=df.index)
+    
+    # Collect all horse IDs that match these normalized names
+    all_horse_ids = []
+    for norm_name in matched_normalized_names:
+        if norm_name in _HORSE_NAME_INDEX:
+            all_horse_ids.extend(_HORSE_NAME_INDEX[norm_name])
+    
+    if not all_horse_ids:
+        return pd.Series([np.nan] * len(df), index=df.index)
+    
+    # Query historical odds using horse IDs
+    placeholders = ','.join('?' * len(all_horse_ids))
+    query = f"""
+    SELECT r.horse_id, r.horse, r.race_id, rac.date as race_date, r.win_odds
+    FROM runners r
+    JOIN races rac ON r.race_id = rac.race_id
+    WHERE r.horse_id IN ({placeholders})
+      AND r.win_odds IS NOT NULL
+      AND r.win_odds > 0
+    ORDER BY rac.date
+    """
+    
+    hist_df = pd.read_sql_query(query, conn, params=all_horse_ids)
+    
+    print(f"\n[DEBUG trend] Queried {len(all_horse_ids)} horse IDs from {len(matched_normalized_names)} normalized names, got {len(hist_df)} historical rows")
+    
+    # Convert win_odds to numeric and handle non-numeric values
+    hist_df['win_odds'] = pd.to_numeric(hist_df['win_odds'], errors='coerce')
+    
+    # Filter out rows where win_odds is NaN
+    hist_df = hist_df[hist_df['win_odds'].notna()]
+    
+    if hist_df.empty:
+        return pd.Series([np.nan] * len(df), index=df.index)
+    
+    # Normalize horse names in historical data to group by normalized name
+    hist_df['normalized_name'] = hist_df['horse'].apply(normalize_horse_name)
+    
+    print(f"[DEBUG trend] After filtering: {len(hist_df)} rows, {hist_df['normalized_name'].nunique()} unique normalized names")
+    
+    # Calculate rolling average of odds for each normalized horse name
+    hist_df['race_date'] = pd.to_datetime(hist_df['race_date'])
+    hist_df = hist_df.sort_values(['normalized_name', 'race_date'])
+    
+    hist_df['rolling_avg_odds'] = hist_df.groupby('normalized_name')['win_odds'].transform(
+        lambda x: x.rolling(window=3, min_periods=1).mean()
     )
     
-    # Calculate the ratio (current odds / rolling average)
-    # Fill missing or zero denominators with 1
-    ratio = df_sorted['win_odds'] / rolling_odds.replace(0, 1).fillna(1)
+    # Get the most recent rolling average for each normalized name
+    latest_avg = hist_df.groupby('normalized_name')['rolling_avg_odds'].last()
     
-    # Log stats for debugging
-    min_val = ratio.min()
-    max_val = ratio.max()
-    mean_val = ratio.mean()
-    print(f"[horse_odds_trend] min={min_val:.4f}, max={max_val:.4f}, mean={mean_val:.4f}")
+    print(f"[DEBUG trend] Calculated trends for {len(latest_avg)} normalized names")
+    print(f"[DEBUG trend] Sample trend values:\n{latest_avg.head(10)}")
     
-    return ratio
+    # Map back to original DataFrame using matched_historical_id and calculate trend
+    result = df.apply(lambda row: 
+        row['win_odds'] / latest_avg.get(row['matched_historical_id'], 1.0) 
+        if pd.notna(row['matched_historical_id']) and pd.notna(row['win_odds']) and row['matched_historical_id'] in latest_avg
+        else np.nan,
+        axis=1
+    )
+    
+    return result
+
 
 def trainer_odds_bias(df: pd.DataFrame) -> pd.Series:
     """
-    Calculate the average difference between actual outcomes and market probabilities for each trainer.
-    
-    Formula: bias = mean(position <= 2) - mean(1/win_odds)
-    
-    Parameters:
-        df: DataFrame with trainer_id, position, and win_odds columns
-        
-    Returns:
-        Series aligned with df index containing bias scores
+    Calculate trainer odds bias (for trainers we already have IDs).
+    This doesn't need horse matching.
     """
-    # Ensure numeric types
     win_odds = pd.to_numeric(df['win_odds'], errors='coerce')
     position = pd.to_numeric(df['position'], errors='coerce')
     
-    # Calculate market probability (1/odds)
+    # Calculate market probability
     market_prob = 1 / win_odds.replace(0, np.nan)
     
     # Calculate actual performance (placed in top 2)
-    actual_perf = position.fillna(999) <= 2
-    
-    # Group by trainer_id and calculate bias - using a two-step approach to avoid warnings
-    # 1. Calculate actual performance (placed in top 2) for each trainer
     actual_perf_by_trainer = df.groupby('trainer_id')['position'].apply(
         lambda x: (x.fillna(999) <= 2).mean()
     )
-    # 2. Calculate market expectation for each trainer
     market_exp_by_trainer = df.groupby('trainer_id')['win_odds'].apply(
         lambda x: (1 / x.replace(0, np.nan)).mean()
     )
-    # 3. Calculate bias as the difference
     trainer_bias = actual_perf_by_trainer - market_exp_by_trainer
     
-    # Map back to original DataFrame index
     result = df['trainer_id'].map(trainer_bias)
     
-    # Log stats for debugging
-    min_val = result.min()
-    max_val = result.max()
-    mean_val = result.mean()
-    print(f"[trainer_odds_bias] min={min_val:.4f}, max={max_val:.4f}, mean={mean_val:.4f}")
-    
     return result
+
 
 # ---------------- Rolling form ----------------
 
@@ -374,58 +520,82 @@ def _add_rolling_form(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ---------------- Odds-history metrics ----------------
+# ---------------- Odds-history metrics (main entry point) ----------------
 
-def _add_odds_history_metrics(df: pd.DataFrame) -> pd.DataFrame:
+def _add_odds_history_metrics(df: pd.DataFrame, conn: sqlite3.Connection = None) -> pd.DataFrame:
     """
     Add odds-based historical metrics to the DataFrame.
-    
-    Adds four columns:
-    - is_first_time_runner: Indicator for horses with no previous runs
-    - horse_odds_efficiency: Difference between actual results and market expectation for each horse
-    - horse_odds_trend: Ratio of current odds to 3-race rolling average of win_odds
-    - trainer_odds_bias: Difference between actual outcomes and market probabilities for each trainer
-    
-    Parameters:
-        df: DataFrame with required columns (horse_id, trainer_id, position, win_odds, race_date)
-        
-    Returns:
-        DataFrame with added columns
+    Now uses horse name matching to handle different horse IDs across data sources.
     """
-    # Add first-time runner indicator
-    df['is_first_time_runner'] = df['last_run'].isna().astype(int)
+    if conn is None:
+        print("⚠️  Warning: No database connection provided for odds-history metrics")
+        # Add placeholder columns
+        df['is_first_time_runner'] = 1
+        df['horse_odds_efficiency'] = 0.0
+        df['horse_odds_trend'] = 1.0
+        df['trainer_odds_bias'] = 0.0
+        df['first_time_penalty'] = -0.5
+        return df
+    
+    print("\n🔍 Matching horses to historical data...")
+    
+    # Only match future races (where position is NaN)
+    # Historical races already have horse_id, so use that as matched_historical_id
+    future_mask = df['position'].isna()
+    historical_mask = ~future_mask
+    
+    # For historical races, use existing horse_id as matched_historical_id
+    df.loc[historical_mask, 'matched_historical_id'] = df.loc[historical_mask, 'horse_id']
+    df.loc[historical_mask, 'match_confidence'] = 1.0
+    
+    # Only match future horses
+    if future_mask.sum() > 0:
+        df_future = df[future_mask].copy()
+        df_future = _match_horses_to_historical(df_future, conn)
+        
+        # Merge back the matching results
+        df.loc[future_mask, 'matched_historical_id'] = df_future['matched_historical_id']
+        df.loc[future_mask, 'match_confidence'] = df_future['match_confidence']
+    else:
+        # No future races to match
+        df['matched_historical_id'] = df['horse_id']
+        df['match_confidence'] = 1.0
+    
+    # Add first-time runner indicator (only for future races)
+    df['is_first_time_runner'] = 0
+    df.loc[future_mask & df['matched_historical_id'].isna(), 'is_first_time_runner'] = 1
     
     # Calculate horse odds efficiency
-    df['horse_odds_efficiency'] = horse_odds_efficiency(df)
+    print("\n📊 Calculating horse odds efficiency...")
+    df['horse_odds_efficiency'] = _calculate_horse_odds_efficiency(df, conn)
     
     # Calculate horse odds trend
-    df['horse_odds_trend'] = horse_odds_trend(df)
+    print("📈 Calculating horse odds trend...")
+    df['horse_odds_trend'] = _calculate_horse_odds_trend(df, conn)
     
-    # Calculate trainer odds bias
+    # Calculate trainer odds bias (doesn't need matching)
+    print("👔 Calculating trainer odds bias...")
     df['trainer_odds_bias'] = trainer_odds_bias(df)
     
-    # Recalibrate default values for missing odds-history metrics using population statistics
-    # instead of fixed values (0, 1, 0)
+    # Fill missing values with population statistics
     df['horse_odds_efficiency'] = df['horse_odds_efficiency'].fillna(df['horse_odds_efficiency'].mean())
     df['horse_odds_trend'] = df['horse_odds_trend'].fillna(df['horse_odds_trend'].median())
     df['trainer_odds_bias'] = df['trainer_odds_bias'].fillna(df['trainer_odds_bias'].mean())
     
-    # Apply a strong penalty for first-time runners (uncertainty discount)
-    # This significantly reduces the model's bias toward first-time runners
-    df.loc[df['is_first_time_runner'] == 1, 'horse_odds_efficiency'] -= 0.25  # Stronger penalty
-    
-    # Create a derived feature that explicitly penalizes first-time runners in model scoring
-    # This helps the model learn that first-time runners should generally be ranked lower
+    # Apply penalty for first-time runners
+    df.loc[df['is_first_time_runner'] == 1, 'horse_odds_efficiency'] -= 0.25
     df['first_time_penalty'] = df['is_first_time_runner'] * -0.5
     
-    # Print debug summary
-    print("✅ Added odds-history features:")
-    print(df[['is_first_time_runner', 'first_time_penalty', 'horse_odds_efficiency', 'horse_odds_trend', 'trainer_odds_bias']].describe())
-    
-    # Print first-time runner stats
-    first_timers = df['is_first_time_runner'].sum()
-    total_horses = len(df)
-    print(f"First-time runners: {first_timers} ({first_timers/total_horses*100:.1f}% of total)")
+    # Print summary (for all data, but highlight future races if any)
+    print("\n✅ Odds-history features summary:")
+    total_first_time = df['is_first_time_runner'].sum()
+    if future_mask.sum() > 0:
+        future_first_time = df.loc[future_mask, 'is_first_time_runner'].sum()
+        print(f"   First-time runners (future races): {future_first_time}/{future_mask.sum()} ({future_first_time/future_mask.sum()*100:.1f}%)")
+    print(f"   First-time runners (total): {total_first_time} ({df['is_first_time_runner'].mean()*100:.1f}%)")
+    print(f"   Horse odds efficiency: mean={df['horse_odds_efficiency'].mean():.3f}, std={df['horse_odds_efficiency'].std():.3f}")
+    print(f"   Horse odds trend: mean={df['horse_odds_trend'].mean():.3f}, std={df['horse_odds_trend'].std():.3f}")
+    print(f"   Trainer odds bias: mean={df['trainer_odds_bias'].mean():.3f}, std={df['trainer_odds_bias'].std():.3f}")
     
     return df
 
@@ -449,8 +619,8 @@ def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
         # --- Phase 2 rolling form ---
         df = _add_rolling_form(df)
         
-        # --- Phase 3 odds-history metrics ---
-        df = _add_odds_history_metrics(df)
+        # --- Phase 3 odds-history metrics (with horse matching) ---
+        df = _add_odds_history_metrics(df, conn)
 
         df["__ord"] = df["draw"].fillna(9999)
         df = df.sort_values(["race_id", "__ord", "horse_id"]).drop(columns="__ord")
@@ -468,7 +638,9 @@ def _pick_features(df: pd.DataFrame) -> list[str]:
         "horse_id", "horse",
         "trainer_id", "jockey_id", "position",
         # newly excluded race metadata
-        "race_class", "dist_m", "going", "rail"
+        "race_class", "dist_m", "going", "rail",
+        # exclude matching metadata
+        "matched_historical_id", "match_confidence"
     ]
 
     # Features we explicitly want to drop (redundant or flatlined)
@@ -515,88 +687,3 @@ def _pick_features(df: pd.DataFrame) -> list[str]:
     print("   " + ", ".join(feats))
 
     return feats
-
-
-# ---------------- Test code ----------------
-
-if __name__ == "__main__":
-    # Simple test for the odds-based metrics functions
-    import pandas as pd
-    import numpy as np
-    
-    # Create a test DataFrame
-    test_data = {
-        'race_id': ['R1', 'R1', 'R1', 'R2', 'R2', 'R2', 'R3', 'R3', 'R3'],
-        'race_date': pd.to_datetime(['2025-01-01', '2025-01-01', '2025-01-01', 
-                                     '2025-01-08', '2025-01-08', '2025-01-08',
-                                     '2025-01-15', '2025-01-15', '2025-01-15']),
-        'horse_id': ['H1', 'H2', 'H3', 'H1', 'H2', 'H3', 'H1', 'H2', 'H3'],
-        'position': [1, 3, 2, 5, 1, 4, 2, 6, 1],
-        'win_odds': [5.0, 10.0, 3.0, 4.0, 8.0, 12.0, 3.5, 15.0, 6.0],
-        'trainer_id': ['T1', 'T2', 'T1', 'T1', 'T2', 'T3', 'T1', 'T2', 'T3']
-    }
-    
-    test_df = pd.DataFrame(test_data)
-    
-    print("\n----- Testing odds-based metrics functions -----")
-    
-    # Test horse_odds_efficiency
-    print("\nTesting horse_odds_efficiency:")
-    horse_eff = horse_odds_efficiency(test_df)
-    print(f"Horse efficiency values:\n{horse_eff.to_dict()}")
-    
-    # Test horse_odds_trend
-    print("\nTesting horse_odds_trend:")
-    horse_trend = horse_odds_trend(test_df)
-    print(f"Horse odds trend values:\n{horse_trend.to_dict()}")
-    
-    # Test trainer_odds_bias
-    print("\nTesting trainer_odds_bias:")
-    trainer_bias = trainer_odds_bias(test_df)
-    print(f"Trainer bias values:\n{trainer_bias.to_dict()}")
-    
-    # Test integration in feature building
-    print("\n----- Testing integration in build_features() -----")
-    try:
-        print("\nTesting with small test DataFrame:")
-        # Add required columns for build_features pipeline
-        test_df['draw'] = [1, 2, 3, 1, 2, 3, 1, 2, 3]
-        test_df['weight'] = [120, 118, 122, 121, 119, 123, 119, 117, 121]
-        test_df['jockey_id'] = ['J1', 'J2', 'J3', 'J1', 'J2', 'J3', 'J1', 'J2', 'J3']
-        test_df['course'] = 'ST'
-        
-        # Apply odds history metrics
-        result_df = _add_odds_history_metrics(test_df)
-        
-        # Check if columns were added
-        new_cols = ['horse_odds_efficiency', 'horse_odds_trend', 'trainer_odds_bias']
-        for col in new_cols:
-            if col in result_df.columns:
-                print(f"✓ Column '{col}' successfully added")
-            else:
-                print(f"✗ Column '{col}' missing!")
-        
-        print("\nTrying to load real data (if available):")
-        # Try to load real data if available (will fail gracefully if not)
-        try:
-            import os
-            if os.path.exists("data/historical/hkjc.db"):
-                print("Real database found, testing with actual data...")
-                real_df = build_features()
-                
-                # Check if columns were added
-                for col in new_cols:
-                    if col in real_df.columns:
-                        print(f"✓ Column '{col}' successfully added to real data")
-                        print(f"  Sample values: {real_df[col].head(3).tolist()}")
-                    else:
-                        print(f"✗ Column '{col}' missing from real data!")
-            else:
-                print("Real database not found, skipping test with actual data")
-        except Exception as e:
-            print(f"Error testing with real data: {e}")
-            
-    except Exception as e:
-        print(f"Error during integration test: {e}")
-
-
