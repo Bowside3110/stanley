@@ -35,8 +35,15 @@ def build_pair_dataset(df: pd.DataFrame, features: list[str]) -> pd.DataFrame:
                 feats[f"{f}_max"]  = np.nanmax([xi, xj])
                 feats[f"{f}_diff"] = abs(xi - xj)
 
-            feats["same_trainer"] = int(row_i.get("trainer_id") == row_j.get("trainer_id"))
-            feats["same_jockey"]  = int(row_i.get("jockey_id") == row_j.get("jockey_id"))
+            # Use normalized names instead of IDs for consistent matching
+            feats["same_trainer"] = int(
+                row_i.get("trainer_normalized", "") == row_j.get("trainer_normalized", "")
+                and row_i.get("trainer_normalized", "") != ""
+            )
+            feats["same_jockey"] = int(
+                row_i.get("jockey_normalized", "") == row_j.get("jockey_normalized", "")
+                and row_i.get("jockey_normalized", "") != ""
+            )
             try:
                 feats["draw_diff"] = abs((row_i.get("draw") or 0) - (row_j.get("draw") or 0))
             except Exception:

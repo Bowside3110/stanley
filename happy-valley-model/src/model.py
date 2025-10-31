@@ -23,14 +23,19 @@ def prepare_dataset(db_path="data/historical/hkjc.db"):
            ru.jockey,
            ru.trainer,
            ru.win_odds,
-           re.position
+           ru.position
     FROM runners ru
     JOIN races r ON ru.race_id = r.race_id
-    JOIN results re ON ru.race_id = re.race_id AND ru.horse_id = re.horse_id
     WHERE r.course IN ('Sha Tin (HK)', 'Happy Valley (HK)')
+      AND ru.position IS NOT NULL
     """
     df = pd.read_sql(query, conn)
     conn.close()
+    
+    # Convert position to numeric, filtering out non-numeric values (PU, DSQ, etc.)
+    df['position'] = pd.to_numeric(df['position'], errors='coerce')
+    df = df[df['position'].notna()].copy()
+    
     return df
 
 

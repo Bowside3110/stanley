@@ -83,17 +83,23 @@ def import_races(json_path):
                 trainer_id = runner["trainer"]["code"] if runner.get("trainer") else None
                 trainer_name = runner["trainer"]["name_en"] if runner.get("trainer") else None
 
-                # NEW: capture runner status
+                # Capture runner status
                 status = runner.get("status", "unknown")
+                
+                # Capture final position if race is completed
+                # finalPosition = 0 means race not finished, convert to NULL
+                final_position = runner.get("finalPosition")
+                if final_position == 0:
+                    final_position = None
 
                 cur.execute("""
                     INSERT OR REPLACE INTO runners
                     (race_id, horse_id, horse, draw, weight, jockey, jockey_id,
                     trainer, trainer_id, win_odds, position, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     race_id, horse_id, horse_name, draw, weight,
-                    jockey_name, jockey_id, trainer_name, trainer_id, win_odds, status
+                    jockey_name, jockey_id, trainer_name, trainer_id, win_odds, final_position, status
                 ))
 
                 runner_count += 1

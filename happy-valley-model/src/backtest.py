@@ -56,8 +56,15 @@ def build_pair_dataset(df: pd.DataFrame, runner_feats: list[str], gold=None):
                 feats[f"{f}_diff"] = (
                     abs(xi - xj) if pd.notna(xi) and pd.notna(xj) else np.nan
                 )
-            feats["same_trainer"] = int(ri.get("trainer_id") == rj.get("trainer_id"))
-            feats["same_jockey"] = int(ri.get("jockey_id") == rj.get("jockey_id"))
+            # Use normalized names instead of IDs for consistent matching
+            feats["same_trainer"] = int(
+                ri.get("trainer_normalized", "") == rj.get("trainer_normalized", "") 
+                and ri.get("trainer_normalized", "") != ""
+            )
+            feats["same_jockey"] = int(
+                ri.get("jockey_normalized", "") == rj.get("jockey_normalized", "")
+                and ri.get("jockey_normalized", "") != ""
+            )
             feats["race_id"] = rid
             feats["pair"] = tuple(sorted((hi, hj)))
             if gold_map:

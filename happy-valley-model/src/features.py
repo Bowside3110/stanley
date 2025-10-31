@@ -3,7 +3,10 @@ from __future__ import annotations
 import sqlite3
 import numpy as np
 import pandas as pd
-from src.horse_matcher import normalize_horse_name, fuzzy_match_horse, build_horse_name_index
+from src.horse_matcher import (
+    normalize_horse_name, fuzzy_match_horse, build_horse_name_index,
+    normalize_jockey_name, normalize_trainer_name
+)
 
 
 # ---------------- Global cache for horse matching ----------------
@@ -75,15 +78,14 @@ def _base_frame(conn: sqlite3.Connection) -> pd.DataFrame:
         run.weight,
         run.win_odds,
         run.jockey_id,
+        run.jockey,
         run.trainer_id,
+        run.trainer,
         run.status,
-        res.position
+        run.position
     FROM races r
     JOIN runners run 
         ON run.race_id = r.race_id
-    LEFT JOIN results res 
-        ON res.race_id = run.race_id
-       AND res.horse_id = run.horse_id
     WHERE r.course IN ('ST', 'HV', 'Sha Tin (HK)', 'Happy Valley (HK)')
       AND r.race_id IS NOT NULL
     """
@@ -107,6 +109,11 @@ def _base_frame(conn: sqlite3.Connection) -> pd.DataFrame:
         # Keep all historical races OR future declared races
         df = df[~mask_future | mask_declared].copy()
 
+    # Add normalized names for consistent matching across different IDs
+    df["horse_normalized"] = df["horse"].apply(normalize_horse_name)
+    df["jockey_normalized"] = df["jockey"].apply(normalize_jockey_name)
+    df["trainer_normalized"] = df["trainer"].apply(normalize_trainer_name)
+    
     return df
 
 
@@ -149,31 +156,74 @@ def _equipment_flags(df: pd.DataFrame) -> pd.DataFrame:
 
 def _add_margins_and_times(conn, df):
     if not _table_exists(conn, "horse_results"):
+        print("⚠️  horse_results table not found, skipping margins/times features")
         return df
+    
+    # Join with runners to get horse names, then normalize
     hr = _read_sql(conn, """
-        SELECT horse_id, date, btn, time, dist_m, class
-        FROM horse_results
-        WHERE date IS NOT NULL
-        ORDER BY horse_id, date
+        SELECT hr.horse_id, hr.date, hr.btn, hr.time, hr.dist_m, hr.class, r.horse
+        FROM horse_results hr
+        LEFT JOIN runners r ON hr.horse_id = r.horse_id AND hr.race_id = r.race_id
+        WHERE hr.date IS NOT NULL
+        ORDER BY hr.horse_id, hr.date
     """)
+    
+    print(f"[DEBUG margins_times] Loaded {len(hr)} rows from horse_results")
+    
     hr["date"] = pd.to_datetime(hr["date"], errors="coerce")
     hr["btn"] = pd.to_numeric(hr["btn"], errors="coerce")
     hr["dist_m"] = pd.to_numeric(hr["dist_m"], errors="coerce")
-    hr["time_sec"] = pd.to_timedelta(hr["time"], errors="coerce").dt.total_seconds()
+    
+    # Parse race time format "1:49.52" (minutes:seconds.centiseconds)
+    def parse_race_time(time_str):
+        if pd.isna(time_str) or time_str == '':
+            return np.nan
+        try:
+            parts = str(time_str).split(":")
+            if len(parts) != 2:
+                return np.nan
+            minutes = int(parts[0])
+            seconds = float(parts[1])
+            return minutes * 60 + seconds
+        except:
+            return np.nan
+    
+    hr["time_sec"] = hr["time"].apply(parse_race_time)
+    
+    # Add normalized horse name for matching
+    hr["horse_normalized"] = hr["horse"].apply(normalize_horse_name)
+    
+    print(f"[DEBUG margins_times] Unique normalized horses: {hr['horse_normalized'].nunique()}")
 
     feats = []
-    for hid, g in hr.groupby("horse_id"):
+    # Group by normalized name instead of horse_id
+    for norm_name, g in hr.groupby("horse_normalized"):
+        if not norm_name:  # Skip empty names
+            continue
         g = g.sort_values("date")
         g["btn_last3"] = g["btn"].rolling(3, min_periods=1).mean()
         g["time_last3"] = g["time_sec"].rolling(3, min_periods=1).mean()
         g["form_close"] = (g["btn"] <= 1).astype(int).rolling(3, min_periods=1).mean()
-        feats.append(g[["horse_id","date","btn_last3","time_last3","form_close"]])
-    feats = pd.concat(feats)
+        feats.append(g[["horse_normalized","date","btn_last3","time_last3","form_close"]])
+    feats = pd.concat(feats) if feats else pd.DataFrame()
 
-    feats["date"] = pd.to_datetime(feats["date"], errors="coerce")
-    df = df.merge(feats, left_on=["horse_id","race_date"],
-                  right_on=["horse_id","date"], how="left")
-    df = df.drop(columns="date", errors="ignore")
+    if not feats.empty:
+        feats["date"] = pd.to_datetime(feats["date"], errors="coerce")
+        print(f"[DEBUG margins_times] Created features for {len(feats)} horse-date combinations")
+        
+        # Merge by normalized horse name instead of horse_id
+        before_merge = len(df)
+        df = df.merge(feats, left_on=["horse_normalized","race_date"],
+                      right_on=["horse_normalized","date"], how="left")
+        df = df.drop(columns="date", errors="ignore")
+        
+        # Report coverage
+        btn_coverage = df["btn_last3"].notna().sum()
+        form_coverage = df["form_close"].notna().sum()
+        print(f"[DEBUG margins_times] After merge: btn_last3={btn_coverage}/{before_merge} ({btn_coverage/before_merge*100:.1f}%), form_close={form_coverage}/{before_merge} ({form_coverage/before_merge*100:.1f}%)")
+    else:
+        print("[DEBUG margins_times] No features created (empty feats)")
+        
     return df
 
 
@@ -181,30 +231,58 @@ def _add_margins_and_times(conn, df):
 
 def _add_class_distance_moves(conn, df):
     if not _table_exists(conn, "horse_results"):
+        print("⚠️  horse_results table not found, skipping class/distance features")
         return df
+    
+    # Join with runners to get horse names, then normalize
     hr = _read_sql(conn, """
-        SELECT horse_id, date, dist_m, class
-        FROM horse_results
-        WHERE date IS NOT NULL
-        ORDER BY horse_id, date
+        SELECT hr.horse_id, hr.date, hr.dist_m, hr.class, r.horse
+        FROM horse_results hr
+        LEFT JOIN runners r ON hr.horse_id = r.horse_id AND hr.race_id = r.race_id
+        WHERE hr.date IS NOT NULL
+        ORDER BY hr.horse_id, hr.date
     """)
+    
+    print(f"[DEBUG class_dist] Loaded {len(hr)} rows from horse_results")
+    
     hr["date"] = pd.to_datetime(hr["date"], errors="coerce")
     hr["dist_m"] = pd.to_numeric(hr["dist_m"], errors="coerce")
+    
+    # Add normalized horse name for matching
+    hr["horse_normalized"] = hr["horse"].apply(normalize_horse_name)
+    
+    print(f"[DEBUG class_dist] Unique normalized horses: {hr['horse_normalized'].nunique()}")
 
     feats = []
-    for hid, g in hr.groupby("horse_id"):
+    # Group by normalized name instead of horse_id
+    for norm_name, g in hr.groupby("horse_normalized"):
+        if not norm_name:  # Skip empty names
+            continue
         g = g.sort_values("date")
         g["prev_class"] = g["class"].shift(1)
         g["prev_dist_m"] = g["dist_m"].shift(1)
         g["class_move"] = (g["prev_class"] != g["class"]).astype(int)
         g["dist_delta"] = g["dist_m"] - g["prev_dist_m"]
-        feats.append(g[["horse_id","date","class_move","dist_delta"]])
-    feats = pd.concat(feats)
+        feats.append(g[["horse_normalized","date","class_move","dist_delta"]])
+    feats = pd.concat(feats) if feats else pd.DataFrame()
 
-    feats["date"] = pd.to_datetime(feats["date"], errors="coerce")
-    df = df.merge(feats, left_on=["horse_id","race_date"],
-                  right_on=["horse_id","date"], how="left")
-    df = df.drop(columns="date", errors="ignore")
+    if not feats.empty:
+        feats["date"] = pd.to_datetime(feats["date"], errors="coerce")
+        print(f"[DEBUG class_dist] Created features for {len(feats)} horse-date combinations")
+        
+        # Merge by normalized horse name instead of horse_id
+        before_merge = len(df)
+        df = df.merge(feats, left_on=["horse_normalized","race_date"],
+                      right_on=["horse_normalized","date"], how="left")
+        df = df.drop(columns="date", errors="ignore")
+        
+        # Report coverage
+        class_coverage = df["class_move"].notna().sum()
+        dist_coverage = df["dist_delta"].notna().sum()
+        print(f"[DEBUG class_dist] After merge: class_move={class_coverage}/{before_merge} ({class_coverage/before_merge*100:.1f}%), dist_delta={dist_coverage}/{before_merge} ({dist_coverage/before_merge*100:.1f}%)")
+    else:
+        print("[DEBUG class_dist] No features created (empty feats)")
+        
     return df
 
 
@@ -463,8 +541,8 @@ def _calculate_horse_odds_trend(df: pd.DataFrame, conn: sqlite3.Connection) -> p
 
 def trainer_odds_bias(df: pd.DataFrame) -> pd.Series:
     """
-    Calculate trainer odds bias (for trainers we already have IDs).
-    This doesn't need horse matching.
+    Calculate trainer odds bias using normalized trainer names.
+    Now uses names instead of IDs for consistent matching.
     """
     win_odds = pd.to_numeric(df['win_odds'], errors='coerce')
     position = pd.to_numeric(df['position'], errors='coerce')
@@ -472,16 +550,16 @@ def trainer_odds_bias(df: pd.DataFrame) -> pd.Series:
     # Calculate market probability
     market_prob = 1 / win_odds.replace(0, np.nan)
     
-    # Calculate actual performance (placed in top 2)
-    actual_perf_by_trainer = df.groupby('trainer_id')['position'].apply(
+    # Calculate actual performance (placed in top 2) - use normalized name
+    actual_perf_by_trainer = df.groupby('trainer_normalized')['position'].apply(
         lambda x: (x.fillna(999) <= 2).mean()
     )
-    market_exp_by_trainer = df.groupby('trainer_id')['win_odds'].apply(
+    market_exp_by_trainer = df.groupby('trainer_normalized')['win_odds'].apply(
         lambda x: (1 / x.replace(0, np.nan)).mean()
     )
     trainer_bias = actual_perf_by_trainer - market_exp_by_trainer
     
-    result = df['trainer_id'].map(trainer_bias)
+    result = df['trainer_normalized'].map(trainer_bias)
     
     return result
 
@@ -489,33 +567,46 @@ def trainer_odds_bias(df: pd.DataFrame) -> pd.Series:
 # ---------------- Rolling form ----------------
 
 def _add_rolling_form(df: pd.DataFrame) -> pd.DataFrame:
-    # Horse rolling form
-    df = df.sort_values(['horse_id','race_date'])
+    print(f"[DEBUG rolling_form] Starting with {len(df)} rows")
+    print(f"[DEBUG rolling_form] Rows with position: {df['position'].notna().sum()}")
+    
+    # Horse rolling form - use normalized name instead of horse_id
+    df = df.sort_values(['horse_normalized','race_date'])
     df['horse_pos_avg3'] = (
-        df.groupby('horse_id')['position']
+        df.groupby('horse_normalized')['position']
           .transform(lambda x: x.rolling(3, 1).mean().shift(1))
     )
     df['horse_last_placed'] = (
-        df.groupby('horse_id')['position']
+        df.groupby('horse_normalized')['position']
           .shift(1)
           .between(1, 3).astype(int)
     )
+    
+    horse_pos_coverage = df['horse_pos_avg3'].notna().sum()
+    horse_placed_coverage = df['horse_last_placed'].notna().sum()
+    print(f"[DEBUG rolling_form] Horse features: horse_pos_avg3={horse_pos_coverage}/{len(df)} ({horse_pos_coverage/len(df)*100:.1f}%), horse_last_placed={horse_placed_coverage}/{len(df)} ({horse_placed_coverage/len(df)*100:.1f}%)")
 
-    # Trainer rolling strike rate
-    df = df.sort_values(['trainer_id','race_date'])
+    # Trainer rolling strike rate - use normalized name instead of ID
+    df = df.sort_values(['trainer_normalized','race_date'])
     df['trainer_win30'] = (
         df.assign(win=(df['position'] == 1).astype(int))
-          .groupby('trainer_id')['win']
+          .groupby('trainer_normalized')['win']
           .transform(lambda x: x.rolling(window=50, min_periods=5).mean().shift(1))
     )
+    
+    trainer_coverage = df['trainer_win30'].notna().sum()
+    print(f"[DEBUG rolling_form] Trainer features: trainer_win30={trainer_coverage}/{len(df)} ({trainer_coverage/len(df)*100:.1f}%)")
 
-    # Jockey rolling strike rate
-    df = df.sort_values(['jockey_id','race_date'])
+    # Jockey rolling strike rate - use normalized name instead of ID
+    df = df.sort_values(['jockey_normalized','race_date'])
     df['jockey_win30'] = (
         df.assign(win=(df['position'] == 1).astype(int))
-          .groupby('jockey_id')['win']
+          .groupby('jockey_normalized')['win']
           .transform(lambda x: x.rolling(window=50, min_periods=5).mean().shift(1))
     )
+    
+    jockey_coverage = df['jockey_win30'].notna().sum()
+    print(f"[DEBUG rolling_form] Jockey features: jockey_win30={jockey_coverage}/{len(df)} ({jockey_coverage/len(df)*100:.1f}%)")
 
     return df
 

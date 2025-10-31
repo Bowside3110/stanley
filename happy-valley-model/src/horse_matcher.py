@@ -47,6 +47,84 @@ def normalize_horse_name(name) -> str:
     return name.strip()
 
 
+def normalize_jockey_name(name) -> str:
+    """
+    Normalize jockey name for matching.
+    - Lowercase
+    - Remove all punctuation (periods, commas)
+    - Normalize whitespace
+    
+    Examples:
+        "A S Cruz" -> "a s cruz"
+        "A. S. Cruz" -> "a s cruz"
+        "M L Yeung" -> "m l yeung"
+    """
+    # Handle None, NaN, or float values
+    if name is None:
+        return ""
+    if isinstance(name, float) and np.isnan(name):
+        return ""
+        
+    # Convert to string if it's not already
+    if not isinstance(name, str):
+        name = str(name).strip()
+        
+    # Return empty string if the result is empty or equals 'nan'
+    if not name or name.lower() == 'nan':
+        return ""
+    
+    # Convert to lowercase
+    name = name.lower()
+    
+    # Remove all punctuation
+    name = re.sub(r'[^\w\s]', '', name)
+    
+    # Normalize whitespace
+    name = ' '.join(name.split())
+    
+    return name.strip()
+
+
+def normalize_trainer_name(name) -> str:
+    """
+    Normalize trainer name for matching.
+    - Lowercase
+    - Remove all punctuation (periods, commas, ampersands)
+    - Normalize whitespace
+    - Handle partnership names
+    
+    Examples:
+        "A S Cruz" -> "a s cruz"
+        "Ben, Will & JD Hayes" -> "ben will jd hayes"
+        "M Price & M Kent (Jnr)" -> "m price m kent jnr"
+        "P O'Sullivan" -> "p osullivan"
+    """
+    # Handle None, NaN, or float values
+    if name is None:
+        return ""
+    if isinstance(name, float) and np.isnan(name):
+        return ""
+        
+    # Convert to string if it's not already
+    if not isinstance(name, str):
+        name = str(name).strip()
+        
+    # Return empty string if the result is empty or equals 'nan'
+    if not name or name.lower() == 'nan':
+        return ""
+    
+    # Convert to lowercase
+    name = name.lower()
+    
+    # Remove all punctuation (including ampersands, commas, periods, parentheses)
+    name = re.sub(r'[^\w\s]', '', name)
+    
+    # Normalize whitespace
+    name = ' '.join(name.split())
+    
+    return name.strip()
+
+
 def fuzzy_match_horse(target_name: str, name_to_ids_index: dict, threshold: float = 0.85) -> tuple:
     """
     Find the best matching horse from candidates using fuzzy matching.
@@ -114,6 +192,80 @@ def build_horse_name_index(conn) -> dict:
     
     total_ids = sum(len(ids) for ids in name_to_ids.values())
     print(f"Built horse name index with {len(name_to_ids)} unique normalized names mapping to {total_ids} horse IDs")
+    
+    return name_to_ids
+
+
+def build_jockey_name_index(conn) -> dict:
+    """
+    Build an index mapping normalized jockey names to lists of jockey IDs.
+    Returns dict of {normalized_name: [jockey_id1, jockey_id2, ...]}
+    
+    This handles cases where the same jockey appears with different IDs.
+    Note: IDs are unreliable (same ID can map to different people), so we use names as primary key.
+    """
+    import pandas as pd
+    
+    # Query all unique jockeys from runners table
+    query = """
+    SELECT DISTINCT jockey, jockey_id
+    FROM runners
+    WHERE jockey IS NOT NULL 
+      AND jockey != ''
+    """
+    
+    df = pd.read_sql_query(query, conn)
+    
+    # Build mapping from normalized name to list of jockey IDs
+    name_to_ids = {}
+    for _, row in df.iterrows():
+        normalized = normalize_jockey_name(row['jockey'])
+        if normalized:
+            if normalized not in name_to_ids:
+                name_to_ids[normalized] = []
+            # Only add non-null IDs
+            if row['jockey_id'] is not None:
+                name_to_ids[normalized].append(row['jockey_id'])
+    
+    total_ids = sum(len(ids) for ids in name_to_ids.values())
+    print(f"Built jockey name index with {len(name_to_ids)} unique normalized names mapping to {total_ids} jockey IDs")
+    
+    return name_to_ids
+
+
+def build_trainer_name_index(conn) -> dict:
+    """
+    Build an index mapping normalized trainer names to lists of trainer IDs.
+    Returns dict of {normalized_name: [trainer_id1, trainer_id2, ...]}
+    
+    This handles cases where the same trainer appears with different IDs.
+    Note: IDs are unreliable (same ID can map to different people), so we use names as primary key.
+    """
+    import pandas as pd
+    
+    # Query all unique trainers from runners table
+    query = """
+    SELECT DISTINCT trainer, trainer_id
+    FROM runners
+    WHERE trainer IS NOT NULL 
+      AND trainer != ''
+    """
+    
+    df = pd.read_sql_query(query, conn)
+    
+    # Build mapping from normalized name to list of trainer IDs
+    name_to_ids = {}
+    for _, row in df.iterrows():
+        normalized = normalize_trainer_name(row['trainer'])
+        if normalized:
+            if normalized not in name_to_ids:
+                name_to_ids[normalized] = []
+            # Only add non-null IDs
+            if row['trainer_id'] is not None:
+                name_to_ids[normalized].append(row['trainer_id'])
+    
+    total_ids = sum(len(ids) for ids in name_to_ids.values())
+    print(f"Built trainer name index with {len(name_to_ids)} unique normalized names mapping to {total_ids} trainer IDs")
     
     return name_to_ids
 
