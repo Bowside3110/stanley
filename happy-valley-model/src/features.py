@@ -66,6 +66,7 @@ def _base_frame(conn: sqlite3.Connection) -> pd.DataFrame:
     SELECT
         r.race_id,
         r.date AS race_date,
+        r.post_time AS race_time,
         r.course,
         r.race_name,
         r.class AS race_class,
@@ -155,20 +156,24 @@ def _equipment_flags(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------- Margins & Times ----------------
 
 def _add_margins_and_times(conn, df):
-    if not _table_exists(conn, "horse_results"):
-        print("⚠️  horse_results table not found, skipping margins/times features")
-        return df
-    
-    # Join with runners to get horse names, then normalize
+    # Get data from runners table
     hr = _read_sql(conn, """
-        SELECT hr.horse_id, hr.date, hr.btn, hr.time, hr.dist_m, hr.class, r.horse
-        FROM horse_results hr
-        LEFT JOIN runners r ON hr.horse_id = r.horse_id AND hr.race_id = r.race_id
-        WHERE hr.date IS NOT NULL
-        ORDER BY hr.horse_id, hr.date
+        SELECT 
+            run.horse_id, 
+            r.date, 
+            run.btn, 
+            run.time, 
+            r.distance AS dist_m, 
+            r.class, 
+            run.horse
+        FROM runners run
+        JOIN races r ON run.race_id = r.race_id
+        WHERE r.date IS NOT NULL
+            AND run.position IS NOT NULL
+        ORDER BY run.horse_id, r.date
     """)
     
-    print(f"[DEBUG margins_times] Loaded {len(hr)} rows from horse_results")
+    print(f"[DEBUG margins_times] Loaded {len(hr)} rows from runners table")
     
     hr["date"] = pd.to_datetime(hr["date"], errors="coerce")
     hr["btn"] = pd.to_numeric(hr["btn"], errors="coerce")
@@ -230,20 +235,22 @@ def _add_margins_and_times(conn, df):
 # ---------------- Class / Distance Moves ----------------
 
 def _add_class_distance_moves(conn, df):
-    if not _table_exists(conn, "horse_results"):
-        print("⚠️  horse_results table not found, skipping class/distance features")
-        return df
-    
-    # Join with runners to get horse names, then normalize
+    # Get data from runners table
     hr = _read_sql(conn, """
-        SELECT hr.horse_id, hr.date, hr.dist_m, hr.class, r.horse
-        FROM horse_results hr
-        LEFT JOIN runners r ON hr.horse_id = r.horse_id AND hr.race_id = r.race_id
-        WHERE hr.date IS NOT NULL
-        ORDER BY hr.horse_id, hr.date
+        SELECT 
+            run.horse_id, 
+            r.date, 
+            r.distance AS dist_m, 
+            r.class, 
+            run.horse
+        FROM runners run
+        JOIN races r ON run.race_id = r.race_id
+        WHERE r.date IS NOT NULL
+            AND run.position IS NOT NULL
+        ORDER BY run.horse_id, r.date
     """)
     
-    print(f"[DEBUG class_dist] Loaded {len(hr)} rows from horse_results")
+    print(f"[DEBUG class_dist] Loaded {len(hr)} rows from runners table")
     
     hr["date"] = pd.to_datetime(hr["date"], errors="coerce")
     hr["dist_m"] = pd.to_numeric(hr["dist_m"], errors="coerce")

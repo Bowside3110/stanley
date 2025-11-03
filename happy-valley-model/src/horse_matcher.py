@@ -49,15 +49,22 @@ def normalize_horse_name(name) -> str:
 
 def normalize_jockey_name(name) -> str:
     """
-    Normalize jockey name for matching.
+    Normalize jockey name for matching, handling both full and abbreviated formats.
     - Lowercase
     - Remove all punctuation (periods, commas)
     - Normalize whitespace
+    - Use LAST NAME ONLY to handle abbreviated formats
     
     Examples:
-        "A S Cruz" -> "a s cruz"
-        "A. S. Cruz" -> "a s cruz"
-        "M L Yeung" -> "m l yeung"
+        "Zac Purton" -> "purton"
+        "Z Purton" -> "purton"  (abbreviated format from HKJC API)
+        "Joao Moreira" -> "moreira"
+        "J Moreira" -> "moreira"
+        "C. Schofield" -> "schofield"
+        "H.W. Lai" -> "lai"
+    
+    Strategy: Use LAST NAME ONLY for matching to handle both full names
+    (historical data) and abbreviated names (HKJC API)
     """
     # Handle None, NaN, or float values
     if name is None:
@@ -81,6 +88,12 @@ def normalize_jockey_name(name) -> str:
     
     # Normalize whitespace
     name = ' '.join(name.split())
+    
+    # Extract last name only (handles both "Zac Purton" and "Z Purton")
+    parts = name.split()
+    if len(parts) > 0:
+        # Use last name only for better matching across formats
+        return parts[-1].strip()
     
     return name.strip()
 

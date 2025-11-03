@@ -706,8 +706,8 @@ def predict_future(db_path: str, race_date: str, top_box: int = 5, save_csv: str
 
             # pick whatever race metadata exists in df_future
             candidate_meta_cols = [
-                "race_id", "race_name", "class", "race_class",
-                "distance", "dist_m", "going"
+                "race_id", "race_date", "race_time", "course", "race_name", "race_class",
+                "going", "dist_m", "rail"
             ]
             meta_cols = [c for c in candidate_meta_cols if c in df_future.columns]
             used_meta_cols.update(meta_cols)
@@ -737,7 +737,130 @@ def predict_future(db_path: str, race_date: str, top_box: int = 5, save_csv: str
                 rows.append(runner_row)
 
         out_df = pd.DataFrame(rows)
-        out_df = out_df.sort_values(["race_id", "rank"])
+        
+        # Sort by race_date, race_time, and rank (all ascending)
+        sort_cols = []
+        if "race_date" in out_df.columns:
+            out_df["race_date"] = pd.to_datetime(out_df["race_date"])
+            sort_cols.append("race_date")
+        if "race_time" in out_df.columns:
+            out_df["race_time"] = pd.to_datetime(out_df["race_time"], errors='coerce')
+            sort_cols.append("race_time")
+        if "rank" in out_df.columns:
+            sort_cols.append("rank")
+        
+        if sort_cols:
+            out_df = out_df.sort_values(sort_cols)
+        
+        # Convert race_date back to string for CSV output
+        if "race_date" in out_df.columns:
+            out_df["race_date"] = out_df["race_date"].dt.strftime('%Y-%m-%d')
+        
+        # Format race_time to show only local time (HH:MM format)
+        if "race_time" in out_df.columns:
+            out_df["race_time"] = out_df["race_time"].apply(
+                lambda x: x.strftime('%H:%M') if pd.notna(x) else ""
+            )
+        
+        # Add confidence interpretation column based on score
+        if "score" in out_df.columns:
+            def interpret_confidence(score):
+                if pd.isna(score):
+                    return ""
+                elif score >= 0.17:
+                    return "Very High"
+                elif score >= 0.15:
+                    return "High"
+                elif score >= 0.13:
+                    return "Medium"
+                else:
+                    return "Low"
+            
+            out_df["confidence"] = out_df["score"].apply(interpret_confidence)
+        
+        # Add jockey rating interpretation
+        if "jockey_win30" in out_df.columns:
+            def interpret_jockey_rating(win_rate):
+                if pd.isna(win_rate) or win_rate == 0:
+                    return "Unknown"
+                elif win_rate >= 0.15:
+                    return "Elite"
+                elif win_rate >= 0.10:
+                    return "Very Good"
+                elif win_rate >= 0.07:
+                    return "Good"
+                else:
+                    return "Average"
+            
+            out_df["jockey_rating"] = out_df["jockey_win30"].apply(interpret_jockey_rating)
+        
+        # Add trainer rating interpretation
+        if "trainer_win30" in out_df.columns:
+            def interpret_trainer_rating(win_rate):
+                if pd.isna(win_rate) or win_rate == 0:
+                    return "Unknown"
+                elif win_rate >= 0.10:
+                    return "Elite"
+                elif win_rate >= 0.08:
+                    return "Very Good"
+                elif win_rate >= 0.06:
+                    return "Good"
+                else:
+                    return "Average"
+            
+            out_df["trainer_rating"] = out_df["trainer_win30"].apply(interpret_trainer_rating)
+        
+        # Define the desired column order
+        # Columns to remove (can't be populated from HKJC API or runners table)
+        cols_to_remove = [
+            "first_time_penalty", "position", "headgear", "headgear_run", 
+            "wind_surgery", "wind_surgery_run", "race_id", "horse_id", 
+            "jockey_id", "trainer_id", "horse_normalized", "jockey_normalized", 
+            "trainer_normalized", "btn_last3", "time_last3", "matched_historical_id",
+            "is_first_time_runner", "last_run", "form", "form_close", 
+            "class_move", "dist_delta", "has_headgear", "headgear_changed",
+            "has_windsurg", "windsurg_changed", "going", "rail", 
+            "horse_last_placed", "match_confidence"
+        ]
+        
+        # Primary columns in desired order
+        primary_cols = [
+            "race_date", "race_time", "course", "race_name", "race_class",
+            "dist_m", "horse", "win_odds", "score", "confidence", "rank", "draw",
+            "horse_pos_avg3", "weight", "jockey", "jockey_win30", "jockey_rating",
+            "trainer", "trainer_win30", "trainer_rating", "status"
+        ]
+        
+        # Filter to only include columns that exist in the dataframe
+        ordered_cols = [c for c in primary_cols if c in out_df.columns]
+        
+        # Add remaining columns (excluding the ones to remove)
+        remaining_cols = [c for c in out_df.columns 
+                         if c not in ordered_cols and c not in cols_to_remove]
+        
+        final_cols = ordered_cols + remaining_cols
+        out_df = out_df[final_cols]
+        
+        # Format numeric columns to specific decimal places
+        # Percentage format (multiply by 100, show 2 decimal places with % sign)
+        cols_pct = ["score", "trainer_win30", "jockey_win30"]
+        for col in cols_pct:
+            if col in out_df.columns:
+                out_df[col] = out_df[col].apply(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "")
+        
+        # 4 decimal places (non-percentage)
+        cols_4dp = ["market_prob", "market_logit", "horse_odds_efficiency", 
+                    "horse_odds_trend", "trainer_odds_bias"]
+        for col in cols_4dp:
+            if col in out_df.columns:
+                out_df[col] = out_df[col].apply(lambda x: f"{x:.4f}" if pd.notna(x) else "")
+        
+        # 2 decimal places
+        cols_2dp = ["horse_pos_avg3", "rel_draw", "avg_weight", "rel_weight"]
+        for col in cols_2dp:
+            if col in out_df.columns:
+                out_df[col] = out_df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "")
+        
         out_df.to_csv(save_csv, index=False)
 
         print(f"\n✅ Detailed predictions saved to {save_csv}")

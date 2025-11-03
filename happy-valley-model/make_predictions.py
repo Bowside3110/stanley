@@ -58,15 +58,16 @@ def import_races(json_path):
             distance = race.get("distance")
             going = race.get("raceTrack", {}).get("description_en")
             rail = race.get("raceCourse", {}).get("description_en")
+            post_time = race.get("postTime", "")
 
             # Insert race
             cur.execute("""
                 INSERT OR REPLACE INTO races
-                (race_id, date, course, race_name, class, distance, going, rail)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (race_id, date, course, race_name, class, distance, going, rail, post_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 race_id, race_date, course, race_name, race_class,
-                distance, going, rail
+                distance, going, rail, post_time
             ))
             race_count += 1
 
@@ -149,8 +150,7 @@ def show_cheat_sheet(csv_path: str):
         df = df[df["status"].str.lower() == "declared"]
 
     # Group by race and display
-    for rid, g in df.groupby("race_id"):
-        race_name = g["race_name"].iloc[0] if "race_name" in g else "Unknown Race"
+    for race_name, g in df.groupby("race_name", sort=False):
         print(f"\nRace: {race_name}")
         print("Ranked selections:")
 
@@ -158,9 +158,117 @@ def show_cheat_sheet(csv_path: str):
         for _, row in top_n.iterrows():
             horse = row["horse"]
             score = row["score"]
-            print(f" {row['rank']}. {horse} ({score:.3f})")
+            print(f" {row['rank']}. {horse} ({score})")
     
     return df  # Return the DataFrame for further analysis
+
+
+def save_predictions_to_db(predictions_csv, db_path="data/historical/hkjc.db"):
+    """
+    Save predictions from CSV to the runners table in the database.
+    
+    Args:
+        predictions_csv: Path to the predictions CSV file
+        db_path: Path to the database file
+    """
+    from src.horse_matcher import normalize_horse_name
+    import re
+    
+    print("\n" + "=" * 80)
+    print("💾 Saving predictions to database...")
+    
+    # Read predictions CSV
+    df = pd.read_csv(predictions_csv)
+    
+    # Extract prediction date from filename
+    match = re.search(r'(\d{4}-\d{2}-\d{2})', str(predictions_csv))
+    if not match:
+        print("⚠️  Could not extract date from filename, skipping database save")
+        return
+    
+    prediction_date = match.group(1)
+    
+    # Get model version from latest model file
+    model_files = sorted(Path("data/models").glob(f"model_{prediction_date}_*.pkl"))
+    model_version = model_files[-1].name if model_files else f"model_{prediction_date}"
+    
+    # Connect to database
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Normalize race names for matching
+    def normalize_race_name(name):
+        if not name or pd.isna(name):
+            return ""
+        return str(name).upper().strip().replace('  ', ' ')
+    
+    df['race_name_normalized'] = df['race_name'].apply(normalize_race_name)
+    df['horse_normalized'] = df['horse'].apply(normalize_horse_name)
+    
+    # Parse score (handle percentage format)
+    def parse_score(score):
+        if pd.isna(score):
+            return None
+        score_str = str(score).strip()
+        if score_str.endswith('%'):
+            return float(score_str[:-1]) / 100.0
+        return float(score_str)
+    
+    df['score_parsed'] = df['score'].apply(parse_score)
+    
+    # Update runners table
+    matched = 0
+    unmatched = 0
+    
+    for _, row in df.iterrows():
+        race_name_norm = row['race_name_normalized']
+        horse_norm = row['horse_normalized']
+        pred_rank = int(row['rank'])
+        pred_score = row['score_parsed']
+        
+        # Find matching runner
+        query = """
+            SELECT run.rowid, run.horse
+            FROM runners run
+            JOIN races r ON run.race_id = r.race_id
+            WHERE r.date = ?
+              AND UPPER(REPLACE(r.race_name, '  ', ' ')) = ?
+        """
+        
+        cursor.execute(query, (prediction_date, race_name_norm))
+        results = cursor.fetchall()
+        
+        # Filter by normalized horse name
+        matching_results = []
+        for result in results:
+            db_horse_norm = normalize_horse_name(result[1])
+            if db_horse_norm == horse_norm:
+                matching_results.append(result)
+        
+        if len(matching_results) == 1:
+            rowid = matching_results[0][0]
+            
+            # Update runner with prediction
+            update_query = """
+                UPDATE runners
+                SET predicted_rank = ?,
+                    predicted_score = ?,
+                    prediction_date = ?,
+                    model_version = ?
+                WHERE rowid = ?
+            """
+            cursor.execute(update_query, (pred_rank, pred_score, prediction_date, model_version, rowid))
+            matched += 1
+        else:
+            unmatched += 1
+    
+    conn.commit()
+    conn.close()
+    
+    print(f"✅ Saved {matched} predictions to database")
+    if unmatched > 0:
+        print(f"⚠️  {unmatched} predictions could not be matched")
+    print("=" * 80)
 
 
 def analyze_feature_importance(predictions_df):
@@ -277,6 +385,9 @@ if __name__ == "__main__":
     # Extract the date from filename e.g. races_2025-09-28_ST.json
     race_date = Path(latest_json).stem.split("_")[1]
     predictions_csv = run_predictions(race_date)
+    
+    # Save predictions to database
+    save_predictions_to_db(predictions_csv)
     
     # Show the cheat sheet and get the DataFrame for feature importance analysis
     predictions_df = show_cheat_sheet(predictions_csv)
