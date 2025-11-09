@@ -29,50 +29,15 @@ def fetch(endpoint, retries=3, sleep=2):
 
 def ensure_history_tables(conn):
     cur = conn.cursor()
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS horse_results (
-        horse_id   TEXT NOT NULL,
-        race_id    TEXT,
-        date       TEXT,
-        position   INT,
-        class      TEXT,
-        course     TEXT,
-        going      TEXT,
-        dist_m     REAL,
-        draw       TEXT,
-        weight     TEXT,
-        weight_lbs REAL,
-        sp_dec     REAL,
-        btn        REAL,
-        time       TEXT,
-        off_dt     TEXT,
-        PRIMARY KEY (horse_id, race_id)
-    )
-    """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_hr_horse_date ON horse_results(horse_id, date)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_hr_race ON horse_results(race_id)")
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS jockey_results (
-        jockey_id TEXT,
-        race_id   TEXT,
-        date      TEXT,
-        position  INT,
-        PRIMARY KEY (jockey_id, race_id)
-    )
-    """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS trainer_results (
-        trainer_id TEXT,
-        race_id    TEXT,
-        date       TEXT,
-        position   INT,
-        PRIMARY KEY (trainer_id, race_id)
-    )
-    """)
+    # Only add surface if table doesn't already have it
+    cur.execute("PRAGMA table_info(horse_results)")
+    cols = [row[1] for row in cur.fetchall()]
+    if "surface" not in cols:
+        cur.execute("ALTER TABLE horse_results ADD COLUMN surface TEXT")
     conn.commit()
 
 
-# ---------------- Horses (now with UPSERT) ----------------
+# ---------------- Horses (with surface upsert) ----------------
 
 def _fnum(x):
     try:
@@ -111,8 +76,8 @@ def fetch_horse_history(conn, horse_id, upsert: bool):
         cur.execute("""
         INSERT INTO horse_results
         (horse_id, race_id, date, position, class, course, going, dist_m, draw,
-         weight, weight_lbs, sp_dec, btn, time, off_dt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         weight, weight_lbs, sp_dec, btn, time, off_dt, surface)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(horse_id, race_id) DO UPDATE SET
             date       = COALESCE(excluded.date,       horse_results.date),
             position   = COALESCE(excluded.position,   horse_results.position),
@@ -126,7 +91,8 @@ def fetch_horse_history(conn, horse_id, upsert: bool):
             sp_dec     = COALESCE(excluded.sp_dec,     horse_results.sp_dec),
             btn        = COALESCE(excluded.btn,        horse_results.btn),
             time       = COALESCE(excluded.time,       horse_results.time),
-            off_dt     = COALESCE(excluded.off_dt,     horse_results.off_dt)
+            off_dt     = COALESCE(excluded.off_dt,     horse_results.off_dt),
+            surface    = COALESCE(excluded.surface,    horse_results.surface)
         """, (
             horse_id,
             race.get("race_id"),
@@ -143,11 +109,12 @@ def fetch_horse_history(conn, horse_id, upsert: bool):
             _fnum(runner.get("btn")),
             runner.get("time"),
             race.get("off_dt"),
+            race.get("surface"),
         ))
     conn.commit()
 
 
-# ---------------- Jockey / Trainer (unchanged semantics) ----------------
+# ---------------- Jockey / Trainer (unchanged) ----------------
 
 def fetch_jockey_history(conn, jockey_id):
     cur = conn.cursor()
