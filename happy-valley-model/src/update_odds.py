@@ -8,9 +8,9 @@ This script:
 3. Automatically re-runs predictions with updated odds
 
 Usage:
-    python update_odds.py                    # Updates today's races
-    python update_odds.py --date 2025-11-02  # Updates specific date
-    python update_odds.py --show-changes     # Shows odds changes before/after
+    python -m src.update_odds                    # Updates today's races
+    python -m src.update_odds --date 2025-11-02  # Updates specific date
+    python -m src.update_odds --show-changes     # Shows odds changes before/after
 """
 
 import subprocess
@@ -51,7 +51,8 @@ def fetch_live_odds(race_date):
     result = subprocess.run(
         ["node", "fetch_next_meeting.mjs"],
         capture_output=True,
-        text=True
+        text=True,
+        cwd="scripts"
     )
     
     if result.returncode != 0:
@@ -175,7 +176,7 @@ def regenerate_predictions(race_date):
     print(f"🔮 Regenerating predictions for {race_date}...")
     
     # Import and run the prediction function
-    from make_predictions import run_predictions
+    from src.make_predictions import run_predictions
     
     predictions_csv = run_predictions(race_date)
     

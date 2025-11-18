@@ -14,7 +14,8 @@ def run_node_fetch():
     result = subprocess.run(
         ["node", "fetch_next_meeting.mjs"],
         capture_output=True,
-        text=True
+        text=True,
+        cwd="scripts"
     )
     if result.returncode != 0:
         print("❌ Node fetcher failed:")
@@ -165,13 +166,15 @@ def show_cheat_sheet(csv_path: str):
 
 def save_predictions_to_db(predictions_csv, db_path="data/historical/hkjc.db"):
     """
-    Save predictions from CSV to the runners table in the database.
+    Save predictions from CSV to the predictions table in the database.
+    This allows tracking multiple predictions per race over time.
     
     Args:
         predictions_csv: Path to the predictions CSV file
         db_path: Path to the database file
     """
     from src.horse_matcher import normalize_horse_name
+    from datetime import datetime
     import re
     
     print("\n" + "=" * 80)
@@ -191,6 +194,9 @@ def save_predictions_to_db(predictions_csv, db_path="data/historical/hkjc.db"):
     # Get model version from latest model file
     model_files = sorted(Path("data/models").glob(f"model_{prediction_date}_*.pkl"))
     model_version = model_files[-1].name if model_files else f"model_{prediction_date}"
+    
+    # Get current timestamp for this prediction run
+    prediction_timestamp = datetime.now().isoformat()
     
     # Connect to database
     conn = sqlite3.connect(db_path)
@@ -216,7 +222,7 @@ def save_predictions_to_db(predictions_csv, db_path="data/historical/hkjc.db"):
     
     df['score_parsed'] = df['score'].apply(parse_score)
     
-    # Update runners table
+    # Insert into predictions table
     matched = 0
     unmatched = 0
     
@@ -225,10 +231,11 @@ def save_predictions_to_db(predictions_csv, db_path="data/historical/hkjc.db"):
         horse_norm = row['horse_normalized']
         pred_rank = int(row['rank'])
         pred_score = row['score_parsed']
+        win_odds = row.get('win_odds')  # Capture odds at prediction time
         
-        # Find matching runner
+        # Find matching runner to get race_id and horse_id
         query = """
-            SELECT run.rowid, run.horse
+            SELECT run.race_id, run.horse_id, run.horse
             FROM runners run
             JOIN races r ON run.race_id = r.race_id
             WHERE r.date = ?
@@ -241,31 +248,47 @@ def save_predictions_to_db(predictions_csv, db_path="data/historical/hkjc.db"):
         # Filter by normalized horse name
         matching_results = []
         for result in results:
-            db_horse_norm = normalize_horse_name(result[1])
+            db_horse_norm = normalize_horse_name(result[2])
             if db_horse_norm == horse_norm:
                 matching_results.append(result)
         
         if len(matching_results) == 1:
-            rowid = matching_results[0][0]
+            race_id, horse_id, _ = matching_results[0]
             
-            # Update runner with prediction
+            # Insert prediction into predictions table
+            insert_query = """
+                INSERT INTO predictions
+                (race_id, horse_id, predicted_rank, predicted_score, 
+                 prediction_timestamp, model_version, win_odds_at_prediction)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
+            cursor.execute(insert_query, (
+                race_id, horse_id, pred_rank, pred_score,
+                prediction_timestamp, model_version, win_odds
+            ))
+            matched += 1
+            
+            # Also update runners table for backward compatibility
             update_query = """
                 UPDATE runners
                 SET predicted_rank = ?,
                     predicted_score = ?,
                     prediction_date = ?,
                     model_version = ?
-                WHERE rowid = ?
+                WHERE race_id = ? AND horse_id = ?
             """
-            cursor.execute(update_query, (pred_rank, pred_score, prediction_date, model_version, rowid))
-            matched += 1
+            cursor.execute(update_query, (
+                pred_rank, pred_score, prediction_date, model_version,
+                race_id, horse_id
+            ))
         else:
             unmatched += 1
     
     conn.commit()
     conn.close()
     
-    print(f"✅ Saved {matched} predictions to database")
+    print(f"✅ Saved {matched} predictions to database (predictions table)")
+    print(f"   Prediction timestamp: {prediction_timestamp}")
     if unmatched > 0:
         print(f"⚠️  {unmatched} predictions could not be matched")
     print("=" * 80)

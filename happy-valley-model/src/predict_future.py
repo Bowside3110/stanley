@@ -886,6 +886,42 @@ def predict_future(db_path: str, race_date: str, top_box: int = 5, save_csv: str
                 pickle.dump(pair_model, f)
                 
             print(f"\n✅ Model saved to {model_path}")
+            
+            # Also save as pre-trained model for fast predictions
+            pretrained_dir = Path("data/models/pretrained")
+            pretrained_dir.mkdir(parents=True, exist_ok=True)
+            
+            pretrained_filename = f"pretrained_model_{timestamp}.pkl"
+            pretrained_path = pretrained_dir / pretrained_filename
+            
+            # Save model with metadata for pre-trained use
+            model_data = {
+                "model": pair_model,
+                "runner_features": runner_feats,
+                "training_date": datetime.now().isoformat(),
+                "num_training_races": df_train['race_id'].nunique() if not compare_baseline else df_train_subset['race_id'].nunique(),
+                "num_training_pairs": len(train_pairs),
+                "training_accuracy": None,  # Could calculate if needed
+                "model_params": {
+                    "max_depth": 5,
+                    "learning_rate": 0.05,
+                    "max_iter": 300
+                }
+            }
+            
+            with open(pretrained_path, "wb") as f:
+                pickle.dump(model_data, f)
+            
+            # Create symlink to latest
+            latest_link = pretrained_dir / "latest_model.pkl"
+            if latest_link.exists():
+                latest_link.unlink()
+            latest_link.symlink_to(pretrained_filename)
+            
+            print(f"✅ Pre-trained model saved to {pretrained_path}")
+            print(f"✅ Symlink created: {latest_link} → {pretrained_filename}")
+            print(f"\n💡 Tip: Use 'python -m src.predict_next_race --use-pretrained' for fast predictions (~5s)")
+            
         except Exception as e:
             print(f"\n⚠️ Failed to save model: {e}")
 
