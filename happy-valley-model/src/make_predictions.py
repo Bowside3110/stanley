@@ -3,6 +3,7 @@ import sqlite3
 import json
 from pathlib import Path
 import os
+import sys
 import pandas as pd
 
 DB_PATH = "data/historical/hkjc.db"
@@ -12,10 +13,9 @@ def run_node_fetch():
     """Run the Node fetcher to get the next meeting's races"""
     print("🔄 Running Node fetcher...")
     result = subprocess.run(
-        ["node", "fetch_next_meeting.mjs"],
+        ["node", "scripts/fetch_next_meeting.mjs"],
         capture_output=True,
-        text=True,
-        cwd="scripts"
+        text=True
     )
     if result.returncode != 0:
         print("❌ Node fetcher failed:")
@@ -121,7 +121,7 @@ def run_predictions(date):
     
     # Run the prediction with feature importance flag
     result = subprocess.run([
-        "python", "-m", "src.predict_future",
+        sys.executable, "-m", "src.predict_future",
         "--db", str(DB_PATH),
         "--date", date,
         "--box", "5",
