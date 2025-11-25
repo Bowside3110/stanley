@@ -34,6 +34,9 @@ SCHEDULER_DB_PATH = "data/historical/scheduler_jobs.db"
 HKT = ZoneInfo("Asia/Hong_Kong")  # UTC+8
 BRISBANE = ZoneInfo("Australia/Brisbane")  # UTC+10 (AEST) or UTC+11 (AEDT)
 
+# Global scheduler instance for refresh job
+_scheduler = None
+
 
 def parse_hkt_time(time_str: str) -> datetime:
     """
@@ -397,13 +400,10 @@ def run_race_prediction(race_id: str, race_no: str):
         traceback.print_exc()
 
 
-def refresh_schedule(scheduler):
+def refresh_schedule():
     """
     Re-fetch race times and reload schedule.
-    Call this manually if race times change.
-    
-    Args:
-        scheduler: APScheduler instance
+    This is called automatically by the daily cron job.
     """
     print("\n🔄 Refreshing schedule...")
     
@@ -424,8 +424,17 @@ def refresh_schedule(scheduler):
             print(result.stderr)
             return
         
-        # Reload schedule
-        load_and_schedule_all_races(scheduler)
+        # Get the scheduler from the global context
+        # APScheduler makes the scheduler available via get_scheduler()
+        from apscheduler.schedulers import SchedulerNotRunningError
+        try:
+            # Access scheduler through the module-level variable
+            # We'll need to store it globally
+            global _scheduler
+            if _scheduler:
+                load_and_schedule_all_races(_scheduler)
+        except NameError:
+            print("⚠️  Scheduler not available in refresh context")
         
     except Exception as e:
         print(f"❌ Error refreshing schedule: {e}")
@@ -433,6 +442,8 @@ def refresh_schedule(scheduler):
 
 def main():
     """Main entry point"""
+    global _scheduler
+    
     print("\n" + "=" * 80)
     print("🏇 Stanley Racing Scheduler")
     print("=" * 80)
@@ -466,6 +477,9 @@ def main():
         timezone=BRISBANE
     )
     
+    # Store globally for refresh job
+    _scheduler = scheduler
+    
     # Step 1: Fetch latest race times
     print("\n📥 Fetching latest race schedule...")
     try:
@@ -492,7 +506,6 @@ def main():
         'cron',
         hour=6,
         minute=0,
-        args=[scheduler],
         id='daily_refresh',
         replace_existing=True
     )
