@@ -118,8 +118,8 @@ def load_and_schedule_all_races(scheduler):
         # Schedule 30 minutes before first race
         meeting_job_time = first_race_time - timedelta(minutes=30)
         
-        # Only schedule if in the future
-        if meeting_job_time > now_brisbane:
+        # Only schedule if in the future (with 5 min buffer to avoid edge cases)
+        if meeting_job_time > now_brisbane + timedelta(minutes=5):
             job_id = f"meeting_{meeting_date}"
             
             # Remove existing job if it exists
@@ -139,7 +139,7 @@ def load_and_schedule_all_races(scheduler):
             print(f"  First race: {first_race_time.strftime('%H:%M %Z')}")
             print(f"  Prediction job: {meeting_job_time.strftime('%H:%M %Z')}")
         else:
-            print(f"⏭️  Skipping past meeting: {meeting_date}")
+            print(f"⏭️  Skipping past meeting: {meeting_date} (job time was {meeting_job_time.strftime('%H:%M %Z')})")
     
     # Schedule individual race predictions (2min before each race)
     print("\n🏇 Scheduling individual race predictions:")
@@ -153,16 +153,16 @@ def load_and_schedule_all_races(scheduler):
         # Schedule 2 minutes before race
         race_job_time = race_time - timedelta(minutes=2)
         
-        # Only schedule if in the future
-        if race_job_time > now_brisbane:
+        # Extract race number from race_name or race_id (needed for both branches)
+        race_no = race_id.split('_')[-1] if '_' in race_id else race_id
+        
+        # Only schedule if in the future (with 5 min buffer to avoid edge cases)
+        if race_job_time > now_brisbane + timedelta(minutes=5):
             job_id = f"race_{race_id}"
             
             # Remove existing job if it exists
             if scheduler.get_job(job_id):
                 scheduler.remove_job(job_id)
-            
-            # Extract race number from race_name or race_id
-            race_no = race_id.split('_')[-1] if '_' in race_id else race_id
             
             scheduler.add_job(
                 run_race_prediction,
@@ -179,6 +179,8 @@ def load_and_schedule_all_races(scheduler):
             print(f"  Prediction job: {race_job_time.strftime('%H:%M %Z')}")
         else:
             skipped_count += 1
+            if skipped_count <= 3:  # Only print first few to avoid spam
+                print(f"⏭️  Skipping past race: {race_no} (job time was {race_job_time.strftime('%H:%M %Z')})")
     
     print("-" * 80)
     print(f"✅ Scheduled {scheduled_count} race predictions")
@@ -272,35 +274,8 @@ def run_meeting_predictions(meeting_date: str):
             print(result.stderr)
             return
         
-        # Find the generated predictions CSV
-        predictions_dir = Path("data/predictions")
-        csv_files = sorted(
-            predictions_dir.glob(f"predictions_{meeting_date}*.csv"),
-            key=os.path.getmtime,
-            reverse=True
-        )
-        
-        if not csv_files:
-            print(f"⚠️  No predictions CSV found for {meeting_date}")
-            return
-        
-        csv_path = csv_files[0]
-        
-        # Send email
-        print(f"\n📧 Sending predictions email to {ALERT_EMAIL}...")
-        from src.email_utils import send_prediction_email
-        
-        email_sent = send_prediction_email(
-            to_email=ALERT_EMAIL,
-            subject=f"Stanley Racing Predictions - {meeting_date}",
-            body=f"Attached are the racing predictions for {meeting_date}.",
-            attachment_path=str(csv_path)
-        )
-        
-        if email_sent:
-            print("✅ Predictions email sent successfully")
-        else:
-            print("❌ Failed to send predictions email")
+        # Note: Email is sent by make_predictions.py itself, no need to send again
+        print("\n✅ Meeting predictions completed (email sent by make_predictions.py)")
         
     except subprocess.TimeoutExpired:
         print("❌ Prediction timed out after 10 minutes")
@@ -319,19 +294,23 @@ def run_race_prediction(race_id: str, race_no: str):
         race_no: Race number for display
     """
     print("\n" + "=" * 80)
-    print(f"🏇 Running prediction for Race {race_no}")
+    print(f"🏇 Running prediction for Race {race_no} at {datetime.now(BRISBANE).strftime('%H:%M:%S')}")
     print("=" * 80)
     
     try:
+        import time
+        start_time = time.time()
         # Run predict_next_race.py with --skip-fetch (race should already be in DB)
         result = subprocess.run(
             [sys.executable, "-m", "src.predict_next_race", "--skip-fetch"],
             capture_output=True,
             text=True,
-            timeout=180,  # 3 minute timeout
+            timeout=600,  # 10 minute timeout (training fresh model takes 5-8 minutes)
             cwd=Path(__file__).parent.parent  # Run from project root
         )
         
+        elapsed = time.time() - start_time
+        print(f"⏱️  Prediction completed in {elapsed:.1f} seconds")
         print(result.stdout)
         
         if result.returncode != 0:
@@ -393,7 +372,12 @@ def run_race_prediction(race_id: str, race_no: str):
         print(f"✅ SMS sent successfully. SID: {message.sid}")
         
     except subprocess.TimeoutExpired:
-        print("❌ Prediction timed out after 3 minutes")
+        elapsed = time.time() - start_time
+        print(f"❌ Prediction timed out after {elapsed:.1f} seconds (limit: 600s)")
+        print("   This may indicate:")
+        print("   - Model training taking too long")
+        print("   - Database lock or corruption")
+        print("   - System resource exhaustion (memory/CPU)")
     except Exception as e:
         print(f"❌ Error running race prediction: {e}")
         import traceback
@@ -467,7 +451,7 @@ def main():
     job_defaults = {
         'coalesce': False,
         'max_instances': 1,
-        'misfire_grace_time': 300  # 5 minutes
+        'misfire_grace_time': None  # Don't run missed jobs - races are time-sensitive
     }
     
     scheduler = BlockingScheduler(
@@ -479,6 +463,24 @@ def main():
     
     # Store globally for refresh job
     _scheduler = scheduler
+    
+    # Clean up any stale jobs from previous runs
+    print("\n🧹 Cleaning up stale jobs from database...")
+    stale_jobs = []
+    for job in scheduler.get_jobs():
+        # Skip the daily refresh job
+        if job.id == 'daily_refresh':
+            continue
+        # Remove jobs that would have run in the past
+        next_run = job.trigger.get_next_fire_time(None, datetime.now(BRISBANE))
+        if next_run is None or next_run < datetime.now(BRISBANE):
+            stale_jobs.append(job.id)
+            scheduler.remove_job(job.id)
+    
+    if stale_jobs:
+        print(f"✓ Removed {len(stale_jobs)} stale job(s)")
+    else:
+        print("✓ No stale jobs found")
     
     # Step 1: Fetch latest race times
     print("\n📥 Fetching latest race schedule...")
