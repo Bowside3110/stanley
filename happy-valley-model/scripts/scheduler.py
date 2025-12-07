@@ -253,8 +253,17 @@ def run_meeting_predictions(meeting_date: str):
     Args:
         meeting_date: Date in YYYY-MM-DD format
     """
+    from datetime import datetime
+    timestamp = datetime.now(BRISBANE).strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Log to file
+    with open("logs/scheduler.log", "a") as f:
+        f.write(f"\n{'='*80}\n")
+        f.write(f"{timestamp} - Meeting predictions job fired for {meeting_date}\n")
+        f.write(f"{'='*80}\n")
+    
     print("\n" + "=" * 80)
-    print(f"🏇 Running meeting predictions for {meeting_date}")
+    print(f"🏇 Running meeting predictions for {meeting_date} at {timestamp}")
     print("=" * 80)
     
     try:
@@ -293,8 +302,16 @@ def run_race_prediction(race_id: str, race_no: str):
         race_id: Unique race identifier
         race_no: Race number for display
     """
+    timestamp = datetime.now(BRISBANE).strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Log to file
+    with open("logs/scheduler.log", "a") as f:
+        f.write(f"\n{'='*80}\n")
+        f.write(f"{timestamp} - Race prediction job fired for {race_id} (Race {race_no})\n")
+        f.write(f"{'='*80}\n")
+    
     print("\n" + "=" * 80)
-    print(f"🏇 Running prediction for Race {race_no} at {datetime.now(BRISBANE).strftime('%H:%M:%S')}")
+    print(f"🏇 Running prediction for Race {race_no} at {timestamp}")
     print("=" * 80)
     
     try:
@@ -389,7 +406,19 @@ def refresh_schedule():
     Re-fetch race times and reload schedule.
     This is called automatically by the daily cron job.
     """
-    print("\n🔄 Refreshing schedule...")
+    from datetime import datetime
+    timestamp = datetime.now(BRISBANE).strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Log to file
+    log_file = Path("logs/scheduler.log")
+    log_file.parent.mkdir(exist_ok=True)
+    
+    with open(log_file, "a") as f:
+        f.write(f"\n{'='*80}\n")
+        f.write(f"{timestamp} - Daily refresh triggered\n")
+        f.write(f"{'='*80}\n")
+    
+    print(f"\n🔄 Refreshing schedule at {timestamp}...")
     
     try:
         # Run fetch_race_times.py from project root
@@ -404,9 +433,16 @@ def refresh_schedule():
         print(result.stdout)
         
         if result.returncode != 0:
-            print("❌ Failed to fetch race times:")
-            print(result.stderr)
+            error_msg = f"❌ Failed to fetch race times:\n{result.stderr}"
+            print(error_msg)
+            with open("logs/scheduler.log", "a") as f:
+                f.write(f"{error_msg}\n")
             return
+        
+        # Log success
+        with open("logs/scheduler.log", "a") as f:
+            f.write(f"✅ Fetched race times successfully\n")
+            f.write(f"{result.stdout}\n")
         
         # Get the scheduler from the global context
         # APScheduler makes the scheduler available via get_scheduler()
@@ -417,11 +453,22 @@ def refresh_schedule():
             global _scheduler
             if _scheduler:
                 load_and_schedule_all_races(_scheduler)
+                with open("logs/scheduler.log", "a") as f:
+                    f.write(f"✅ Reloaded schedule successfully\n")
         except NameError:
-            print("⚠️  Scheduler not available in refresh context")
+            msg = "⚠️  Scheduler not available in refresh context"
+            print(msg)
+            with open("logs/scheduler.log", "a") as f:
+                f.write(f"{msg}\n")
         
     except Exception as e:
-        print(f"❌ Error refreshing schedule: {e}")
+        error_msg = f"❌ Error refreshing schedule: {e}"
+        print(error_msg)
+        with open("logs/scheduler.log", "a") as f:
+            f.write(f"{error_msg}\n")
+        import traceback
+        with open("logs/scheduler.log", "a") as f:
+            f.write(traceback.format_exc())
 
 
 def main():
