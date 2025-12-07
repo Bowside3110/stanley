@@ -548,17 +548,18 @@ def main():
     # Step 2: Load and schedule all races
     load_and_schedule_all_races(scheduler)
     
-    # Step 3: Schedule daily refresh at 6am Brisbane time
+    # Step 3: Schedule daily refresh at 10am Brisbane time (8am HK time)
+    # This ensures HKJC API has race data available
     print("\n🔄 Scheduling daily refresh...")
     scheduler.add_job(
         refresh_schedule,
         'cron',
-        hour=6,
+        hour=10,
         minute=0,
         id='daily_refresh',
         replace_existing=True
     )
-    print("✓ Daily refresh scheduled for 6:00 AM Brisbane time")
+    print("✓ Daily refresh scheduled for 10:00 AM Brisbane time (8:00 AM HK time)")
     
     # Print scheduled jobs
     jobs = scheduler.get_jobs()
@@ -587,7 +588,7 @@ def main():
         print("-" * 80)
     
     # Start scheduler
-    print("\n✅ Scheduler started. Daily refresh at 6:00 AM.")
+    print("\n✅ Scheduler started. Daily refresh at 10:00 AM Brisbane / 8:00 AM HK.")
     print("Press Ctrl+C to exit.\n")
     
     try:
