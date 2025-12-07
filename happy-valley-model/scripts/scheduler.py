@@ -521,9 +521,18 @@ def main():
         # Get job details with next run time from scheduler
         job_list = []
         for job in jobs:
-            next_run = scheduler.get_job(job.id).trigger.get_next_fire_time(None, datetime.now(BRISBANE))
-            if next_run:
-                job_list.append((job.id, next_run))
+            try:
+                # For date triggers, get the run_date directly
+                if hasattr(job.trigger, 'run_date'):
+                    next_run = job.trigger.run_date
+                else:
+                    # For cron triggers, calculate next run time
+                    next_run = job.trigger.get_next_fire_time(None, datetime.now(BRISBANE))
+                
+                if next_run:
+                    job_list.append((job.id, next_run))
+            except Exception as e:
+                print(f"⚠️  Warning: Could not get next run time for job {job.id}: {e}")
         
         # Sort by next run time
         for job_id, next_run in sorted(job_list, key=lambda x: x[1]):
@@ -535,9 +544,15 @@ def main():
     print("Press Ctrl+C to exit.\n")
     
     try:
+        print("🔄 Starting scheduler.start()...")
         scheduler.start()
+        print("⚠️  scheduler.start() returned (this should never print)")
     except (KeyboardInterrupt, SystemExit):
         print("\n\n👋 Scheduler stopped.")
+    except Exception as e:
+        print(f"\n\n❌ Scheduler error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
