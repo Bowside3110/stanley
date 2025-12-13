@@ -27,3 +27,7 @@ scripts/
 # Node.js
 node_modules/
 package-lock.json
+
+# Sensitive files
+.env
+cookies.txt
