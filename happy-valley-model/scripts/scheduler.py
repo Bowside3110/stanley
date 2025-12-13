@@ -13,6 +13,7 @@ import os
 import sys
 import sqlite3
 import subprocess
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -29,6 +30,7 @@ ALERT_EMAIL = "adamsalistair1978@gmail.com"
 ALERT_PHONE = "+61417676973"
 DB_PATH = "data/historical/hkjc.db"
 SCHEDULER_DB_PATH = "data/historical/scheduler_jobs.db"
+SCHEDULER_CONTROL_FILE = "data/scheduler_control.json"
 
 # Timezone definitions
 HKT = ZoneInfo("Asia/Hong_Kong")  # UTC+8
@@ -36,6 +38,28 @@ BRISBANE = ZoneInfo("Australia/Brisbane")  # UTC+10 (AEST) or UTC+11 (AEDT)
 
 # Global scheduler instance for refresh job
 _scheduler = None
+
+
+def is_scheduler_enabled():
+    """
+    Check if scheduler is enabled by reading control file.
+    
+    Returns:
+        bool: True if enabled, False if disabled. Defaults to True if file doesn't exist.
+    """
+    try:
+        control_path = Path(SCHEDULER_CONTROL_FILE)
+        if control_path.exists():
+            with open(control_path, 'r') as f:
+                data = json.load(f)
+                return data.get('enabled', True)
+        else:
+            # Default to enabled if file doesn't exist
+            return True
+    except Exception as e:
+        print(f"⚠️  Warning: Error reading scheduler control file: {e}")
+        print("   Defaulting to enabled")
+        return True
 
 
 def parse_hkt_time(time_str: str) -> datetime:
@@ -253,6 +277,14 @@ def run_meeting_predictions(meeting_date: str):
     Args:
         meeting_date: Date in YYYY-MM-DD format
     """
+    # Check if scheduler is enabled before running
+    if not is_scheduler_enabled():
+        timestamp = datetime.now(BRISBANE).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n⏸️  {timestamp} - Scheduler disabled, skipping meeting predictions for {meeting_date}")
+        with open("logs/scheduler.log", "a") as f:
+            f.write(f"{timestamp} - Scheduler disabled, skipping meeting predictions for {meeting_date}\n")
+        return
+    
     from datetime import datetime
     timestamp = datetime.now(BRISBANE).strftime("%Y-%m-%d %H:%M:%S")
     
@@ -302,6 +334,14 @@ def run_race_prediction(race_id: str, race_no: str):
         race_id: Unique race identifier
         race_no: Race number for display
     """
+    # Check if scheduler is enabled before running
+    if not is_scheduler_enabled():
+        timestamp = datetime.now(BRISBANE).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n⏸️  {timestamp} - Scheduler disabled, skipping race prediction for Race {race_no}")
+        with open("logs/scheduler.log", "a") as f:
+            f.write(f"{timestamp} - Scheduler disabled, skipping race prediction for {race_id} (Race {race_no})\n")
+        return
+    
     timestamp = datetime.now(BRISBANE).strftime("%Y-%m-%d %H:%M:%S")
     
     # Log to file
@@ -589,6 +629,8 @@ def main():
     
     # Start scheduler
     print("\n✅ Scheduler started. Daily refresh at 10:00 AM Brisbane / 8:00 AM HK.")
+    print(f"📊 Scheduler status: {'ENABLED' if is_scheduler_enabled() else 'DISABLED'}")
+    print(f"   (Control file: {SCHEDULER_CONTROL_FILE})")
     print("Press Ctrl+C to exit.\n")
     
     try:

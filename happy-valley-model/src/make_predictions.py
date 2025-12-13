@@ -378,7 +378,8 @@ def analyze_feature_importance(predictions_df):
     print("\n⏭️  Skipping model pickle load (too slow)")
     print("   Feature importances are logged during training in predict_future.py")
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for make_predictions script"""
     from src.email_utils import send_prediction_email
     
     print("\n" + "=" * 80)
@@ -440,3 +441,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("✅ make_predictions.py complete")
     print("=" * 80)
+
+
+if __name__ == "__main__":
+    main()
