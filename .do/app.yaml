@@ -6,7 +6,7 @@ services:
   source_dir: happy-valley-model
   dockerfile_path: Dockerfile.web
   github:
-    repo: your-username/stanley-repo
+    repo: Bowside3110/stanley
     branch: main
     deploy_on_push: true
   http_port: 8000
@@ -16,6 +16,7 @@ services:
   - path: /
   health_check:
     http_path: /health
+    port: 8000
   envs:
   - key: USE_POSTGRES
     value: "true"
@@ -23,17 +24,14 @@ services:
     value: ${db.DATABASE_URL}
   - key: JWT_SECRET_KEY
     type: SECRET
-    value: "your-secret-key-here"
   - key: SMTP_SERVER
     value: "smtp.gmail.com"
   - key: SMTP_PORT
     value: "587"
   - key: SMTP_USERNAME
     type: SECRET
-    value: "your-smtp-username"
   - key: SMTP_PASSWORD
     type: SECRET
-    value: "your-smtp-password"
   - key: ALERT_EMAIL
     value: "adamsalistair1978@gmail.com"
 
@@ -41,7 +39,7 @@ services:
   source_dir: happy-valley-model
   dockerfile_path: Dockerfile.worker
   github:
-    repo: your-username/stanley-repo
+    repo: Bowside3110/stanley
     branch: main
     deploy_on_push: true
   instance_count: 1
@@ -53,10 +51,8 @@ services:
     value: ${db.DATABASE_URL}
   - key: TWILIO_ACCOUNT_SID
     type: SECRET
-    value: "your-twilio-sid"
   - key: TWILIO_AUTH_TOKEN
     type: SECRET
-    value: "your-twilio-token"
   - key: TWILIO_FROM_PHONE
     value: "+1234567890"
   - key: ALERT_PHONE
@@ -67,10 +63,8 @@ services:
     value: "587"
   - key: SMTP_USERNAME
     type: SECRET
-    value: "your-smtp-username"
   - key: SMTP_PASSWORD
     type: SECRET
-    value: "your-smtp-password"
   - key: ALERT_EMAIL
     value: "adamsalistair1978@gmail.com"
 
@@ -79,4 +73,3 @@ databases:
   engine: PG
   production: false
   cluster_name: stanley-dbase
-
