@@ -19,8 +19,8 @@ COPY . .
 RUN mkdir -p data/historical data/predictions logs
 
 # Expose port
-EXPOSE 8000
+EXPOSE 8080
 
 # Run database wait check and then start web server
-CMD python scripts/wait_for_db.py && uvicorn web.main:app --host 0.0.0.0 --port 8000
+CMD python scripts/wait_for_db.py && uvicorn web.main:app --host 0.0.0.0 --port 8080
 

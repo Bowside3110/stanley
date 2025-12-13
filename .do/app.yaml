@@ -1,4 +1,4 @@
-name: stanley-racing
+name: stanley-racing-v2
 region: sgp
 
 services:
@@ -9,13 +9,10 @@ services:
     repo: Bowside3110/stanley
     branch: main
     deploy_on_push: true
-  http_port: 8000
-  run_command: uvicorn web.main:app --host 0.0.0.0 --port 8000
+  http_port: 8080
+  run_command: uvicorn web.main:app --host 0.0.0.0 --port 8080
   instance_count: 1
   instance_size_slug: basic-xxs
-  health_check:
-    http_path: /health
-    port: 8000
   envs:
   - key: USE_POSTGRES
     value: "true"
@@ -23,40 +20,6 @@ services:
     value: ${db.DATABASE_URL}
   - key: JWT_SECRET_KEY
     type: SECRET
-  - key: SMTP_SERVER
-    value: "smtp.gmail.com"
-  - key: SMTP_PORT
-    value: "587"
-  - key: SMTP_USERNAME
-    type: SECRET
-  - key: SMTP_PASSWORD
-    type: SECRET
-  - key: ALERT_EMAIL
-    value: "adamsalistair1978@gmail.com"
-
-- name: worker
-  source_dir: happy-valley-model
-  dockerfile_path: Dockerfile.worker
-  github:
-    repo: Bowside3110/stanley
-    branch: main
-    deploy_on_push: true
-  run_command: python scripts/scheduler.py
-  instance_count: 1
-  instance_size_slug: basic-xxs
-  envs:
-  - key: USE_POSTGRES
-    value: "true"
-  - key: DATABASE_URL
-    value: ${db.DATABASE_URL}
-  - key: TWILIO_ACCOUNT_SID
-    type: SECRET
-  - key: TWILIO_AUTH_TOKEN
-    type: SECRET
-  - key: TWILIO_FROM_PHONE
-    value: "+1234567890"
-  - key: ALERT_PHONE
-    value: "+61417676973"
   - key: SMTP_SERVER
     value: "smtp.gmail.com"
   - key: SMTP_PORT
