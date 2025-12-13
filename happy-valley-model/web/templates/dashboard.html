@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stanley Predictions - Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg-gray-100">
+    <!-- Header Navigation -->
+    <nav class="bg-white shadow-lg">
+        <div class="container mx-auto px-4 py-3">
+            <div class="flex justify-between items-center">
+                <h1 class="text-2xl font-bold text-gray-800">🏇 Stanley Predictions</h1>
+                <div class="flex items-center space-x-4">
+                    <span class="text-gray-600">Welcome, <strong>{{ user }}</strong>!</span>
+                    <a href="/logout" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded transition duration-200">
+                        Logout
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mx-auto px-4 py-6">
+        <!-- Status Bar -->
+        <div class="mb-6 flex flex-wrap gap-4 items-center justify-between">
+            <div class="flex items-center space-x-4">
+                <!-- Scheduler Status Indicator -->
+                <div id="scheduler-status" class="bg-gray-200 px-4 py-2 rounded-lg flex items-center space-x-2">
+                    <div class="w-3 h-3 bg-gray-400 rounded-full" id="scheduler-indicator"></div>
+                    <span class="text-sm text-gray-700">Scheduler: <span id="scheduler-text">Checking...</span></span>
+                </div>
+                
+                <!-- Last Updated -->
+                <div class="text-sm text-gray-600">
+                    Last updated: <span id="last-refresh" class="font-semibold">{{ now }}</span>
+                </div>
+            </div>
+
+            <!-- Loading Indicator -->
+            <div id="loading-indicator" class="hidden flex items-center space-x-2 text-blue-600">
+                <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="text-sm">Refreshing...</span>
+            </div>
+
+            <!-- Analytics Link -->
+            <a href="/analytics" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded transition duration-200">
+                📊 Analytics
+            </a>
+        </div>
+
+        <!-- Toast Notification Container -->
+        <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+        <!-- Manual Actions Section -->
+        <div class="mb-6 grid gap-4 md:grid-cols-2">
+            <!-- Action Buttons Card -->
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-xl font-bold mb-4 text-gray-800">⚡ Manual Actions</h2>
+                
+                <div class="space-y-3">
+                    <button 
+                        onclick="predictMeeting()" 
+                        class="w-full bg-green-500 hover:bg-green-600 text-white font-semibold px-4 py-3 rounded transition duration-200 flex items-center justify-center space-x-2">
+                        <span>🏇</span>
+                        <span>Predict Entire Meeting</span>
+                    </button>
+                    
+                    <button 
+                        onclick="predictNextRace()" 
+                        class="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold px-4 py-3 rounded transition duration-200 flex items-center justify-center space-x-2">
+                        <span>🎯</span>
+                        <span>Predict Next Race</span>
+                    </button>
+                    
+                    <button 
+                        onclick="refreshOdds()" 
+                        class="w-full bg-purple-500 hover:bg-purple-600 text-white font-semibold px-4 py-3 rounded transition duration-200 flex items-center justify-center space-x-2">
+                        <span>🔄</span>
+                        <span>Refresh Odds</span>
+                    </button>
+                </div>
+                
+                <p class="text-xs text-gray-500 mt-4">
+                    💡 Actions run in the background. Results will appear when complete.
+                </p>
+            </div>
+            
+            <!-- Scheduler Control Card -->
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-xl font-bold mb-4 text-gray-800">⚙️ Scheduler Control</h2>
+                
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                        <div>
+                            <p class="font-semibold text-gray-800">Automatic Scheduler</p>
+                            <p class="text-sm text-gray-600">Enable/disable scheduled predictions</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="scheduler-toggle" class="sr-only peer" onchange="toggleScheduler()">
+                            <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                    </div>
+                    
+                    <div id="scheduler-info" class="text-sm text-gray-600 p-3 bg-blue-50 rounded border border-blue-200">
+                        <p class="font-semibold mb-1">ℹ️ Scheduler Info:</p>
+                        <p class="text-xs">When enabled, predictions run automatically 30 min before meetings and 2 min before each race.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current Predictions Section -->
+        <div class="mb-6">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">🎯 Current Predictions</h2>
+            
+            <div id="predictions-container">
+                {% if predictions|length == 0 %}
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
+                    <p class="text-gray-600 text-lg">No upcoming predictions available.</p>
+                    <p class="text-sm text-gray-500 mt-2">
+                        Run predictions to see results here.
+                    </p>
+                </div>
+                {% else %}
+                <!-- Predictions Grid -->
+                <div class="grid gap-6 md:grid-cols-1 lg:grid-cols-2">
+                    {% for race in predictions %}
+                    <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition duration-200" data-race-id="{{ race.race_id }}">
+                        <!-- Race Header -->
+                        <div class="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4">
+                            <h3 class="text-xl font-bold mb-1">{{ race.race_name }}</h3>
+                            <div class="flex justify-between items-center text-sm">
+                                <span class="bg-blue-500 bg-opacity-50 px-2 py-1 rounded">
+                                    📍 {{ race.course }}
+                                </span>
+                                <span class="bg-blue-500 bg-opacity-50 px-2 py-1 rounded">
+                                    🕐 {{ race.post_time.strftime('%I:%M %p') if race.post_time else 'TBA' }}
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Predictions Table -->
+                        <div class="overflow-x-auto">
+                            <table class="w-full">
+                                <thead class="bg-gray-50 border-b">
+                                    <tr>
+                                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Rank</th>
+                                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Horse</th>
+                                        <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Draw</th>
+                                        <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Odds</th>
+                                        <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Score</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-200">
+                                    {% for runner in race.predictions[:5] %}
+                                    <tr class="{% if runner.predicted_rank == 1 %}bg-yellow-50{% elif loop.index % 2 == 0 %}bg-gray-50{% else %}bg-white{% endif %} hover:bg-blue-50 transition duration-150">
+                                        <td class="px-4 py-3">
+                                            <span class="inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold
+                                                {% if runner.predicted_rank == 1 %}bg-yellow-400 text-yellow-900
+                                                {% elif runner.predicted_rank == 2 %}bg-gray-300 text-gray-800
+                                                {% elif runner.predicted_rank == 3 %}bg-orange-300 text-orange-900
+                                                {% else %}bg-blue-100 text-blue-800{% endif %}">
+                                                {{ runner.predicted_rank }}
+                                            </span>
+                                        </td>
+                                        <td class="px-4 py-3">
+                                            <span class="font-semibold text-gray-900">{{ runner.horse }}</span>
+                                        </td>
+                                        <td class="px-4 py-3 text-center">
+                                            <span class="inline-block bg-gray-200 text-gray-700 px-2 py-1 rounded text-sm font-medium">
+                                                {{ runner.draw if runner.draw else 'N/A' }}
+                                            </span>
+                                        </td>
+                                        <td class="px-4 py-3 text-right">
+                                            <span class="text-gray-700 font-medium">
+                                                {{ '%.1f'|format(runner.win_odds) if runner.win_odds else 'N/A' }}
+                                            </span>
+                                        </td>
+                                        <td class="px-4 py-3 text-right">
+                                            <span class="text-gray-700 font-medium">
+                                                {{ '%.3f'|format(runner.predicted_score) if runner.predicted_score else 'N/A' }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Footer with prediction count -->
+                        <div class="bg-gray-50 px-4 py-2 text-sm text-gray-600 border-t">
+                            Showing top {{ [race.predictions|length, 5]|min }} of {{ race.predictions|length }} runners
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Upcoming Races Section (No Predictions Yet) -->
+        {% if races|length > 0 %}
+        <div class="mb-6">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">📅 Upcoming Races (Awaiting Predictions)</h2>
+            <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                <table class="w-full">
+                    <thead class="bg-gray-50 border-b">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Race</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Course</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Post Time</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200">
+                        {% for race in races[:10] %}
+                        <tr class="{% if loop.index % 2 == 0 %}bg-gray-50{% else %}bg-white{% endif %} hover:bg-blue-50 transition duration-150">
+                            <td class="px-4 py-3 font-medium text-gray-900">{{ race.race_name }}</td>
+                            <td class="px-4 py-3 text-gray-700">{{ race.course }}</td>
+                            <td class="px-4 py-3 text-gray-700">{{ race.post_time.strftime('%Y-%m-%d %I:%M %p') if race.post_time else 'TBA' }}</td>
+                            <td class="px-4 py-3">
+                                <span class="inline-block bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
+                                    Pending
+                                </span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- JavaScript for Auto-Refresh -->
+    <script>
+        // Configuration
+        const REFRESH_INTERVAL = 30000; // 30 seconds
+        
+        // State
+        let isRefreshing = false;
+
+        /**
+         * Refresh predictions from API
+         */
+        async function refreshPredictions() {
+            if (isRefreshing) return;
+            
+            isRefreshing = true;
+            showLoadingIndicator(true);
+            
+            try {
+                const response = await fetch('/api/predictions');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log('Fetched predictions:', data.length, 'races');
+                
+                // Update predictions table without full page reload
+                updatePredictionsContainer(data);
+                
+                // Update last refresh time
+                const now = new Date();
+                document.getElementById('last-refresh').textContent = now.toLocaleTimeString();
+                
+            } catch (error) {
+                console.error('Failed to refresh predictions:', error);
+                // Don't show error to user during auto-refresh, just log it
+            } finally {
+                isRefreshing = false;
+                showLoadingIndicator(false);
+            }
+        }
+
+        /**
+         * Update predictions container with new data
+         */
+        function updatePredictionsContainer(predictions) {
+            const container = document.getElementById('predictions-container');
+            
+            if (!predictions || predictions.length === 0) {
+                container.innerHTML = `
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
+                        <p class="text-gray-600 text-lg">No upcoming predictions available.</p>
+                        <p class="text-sm text-gray-500 mt-2">
+                            Run predictions to see results here.
+                        </p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Build HTML for predictions
+            let html = '<div class="grid gap-6 md:grid-cols-1 lg:grid-cols-2">';
+            
+            predictions.forEach(race => {
+                html += buildRaceCard(race);
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        /**
+         * Build HTML for a single race card
+         */
+        function buildRaceCard(race) {
+            const postTime = race.post_time ? new Date(race.post_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 'TBA';
+            const topRunners = race.predictions.slice(0, 5);
+            
+            let html = `
+                <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition duration-200" data-race-id="${race.race_id}">
+                    <div class="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4">
+                        <h3 class="text-xl font-bold mb-1">${escapeHtml(race.race_name)}</h3>
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="bg-blue-500 bg-opacity-50 px-2 py-1 rounded">
+                                📍 ${escapeHtml(race.course)}
+                            </span>
+                            <span class="bg-blue-500 bg-opacity-50 px-2 py-1 rounded">
+                                🕐 ${postTime}
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-gray-50 border-b">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Rank</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Horse</th>
+                                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Draw</th>
+                                    <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Odds</th>
+                                    <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Score</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-200">
+            `;
+            
+            topRunners.forEach((runner, index) => {
+                const rowBg = runner.predicted_rank === 1 ? 'bg-yellow-50' : (index % 2 === 0 ? 'bg-gray-50' : 'bg-white');
+                const rankBadge = getRankBadgeClass(runner.predicted_rank);
+                
+                html += `
+                    <tr class="${rowBg} hover:bg-blue-50 transition duration-150">
+                        <td class="px-4 py-3">
+                            <span class="inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold ${rankBadge}">
+                                ${runner.predicted_rank}
+                            </span>
+                        </td>
+                        <td class="px-4 py-3">
+                            <span class="font-semibold text-gray-900">${escapeHtml(runner.horse)}</span>
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            <span class="inline-block bg-gray-200 text-gray-700 px-2 py-1 rounded text-sm font-medium">
+                                ${runner.draw || 'N/A'}
+                            </span>
+                        </td>
+                        <td class="px-4 py-3 text-right">
+                            <span class="text-gray-700 font-medium">
+                                ${runner.win_odds ? runner.win_odds.toFixed(1) : 'N/A'}
+                            </span>
+                        </td>
+                        <td class="px-4 py-3 text-right">
+                            <span class="text-gray-700 font-medium">
+                                ${runner.predicted_score ? runner.predicted_score.toFixed(3) : 'N/A'}
+                            </span>
+                        </td>
+                    </tr>
+                `;
+            });
+            
+            html += `
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="bg-gray-50 px-4 py-2 text-sm text-gray-600 border-t">
+                        Showing top ${Math.min(race.predictions.length, 5)} of ${race.predictions.length} runners
+                    </div>
+                </div>
+            `;
+            
+            return html;
+        }
+
+        /**
+         * Get CSS classes for rank badge
+         */
+        function getRankBadgeClass(rank) {
+            if (rank === 1) return 'bg-yellow-400 text-yellow-900';
+            if (rank === 2) return 'bg-gray-300 text-gray-800';
+            if (rank === 3) return 'bg-orange-300 text-orange-900';
+            return 'bg-blue-100 text-blue-800';
+        }
+
+        /**
+         * Escape HTML to prevent XSS
+         */
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        /**
+         * Show/hide loading indicator
+         */
+        function showLoadingIndicator(show) {
+            const indicator = document.getElementById('loading-indicator');
+            if (show) {
+                indicator.classList.remove('hidden');
+            } else {
+                indicator.classList.add('hidden');
+            }
+        }
+
+        /**
+         * Check scheduler status
+         */
+        async function checkSchedulerStatus() {
+            try {
+                const response = await fetch('/api/scheduler/status');
+                const data = await response.json();
+                
+                const indicator = document.getElementById('scheduler-indicator');
+                const text = document.getElementById('scheduler-text');
+                const container = document.getElementById('scheduler-status');
+                const toggle = document.getElementById('scheduler-toggle');
+                
+                if (data.active) {
+                    indicator.className = 'w-3 h-3 bg-green-500 rounded-full animate-pulse';
+                    text.textContent = `Active${data.next_job ? ' (Next: ' + data.next_job + ')' : ''}`;
+                    container.className = 'bg-green-100 px-4 py-2 rounded-lg flex items-center space-x-2';
+                    toggle.checked = true;
+                } else {
+                    indicator.className = 'w-3 h-3 bg-gray-400 rounded-full';
+                    text.textContent = 'Inactive';
+                    container.className = 'bg-gray-200 px-4 py-2 rounded-lg flex items-center space-x-2';
+                    toggle.checked = false;
+                }
+            } catch (error) {
+                console.error('Failed to check scheduler status:', error);
+            }
+        }
+
+        /**
+         * Toggle scheduler on/off
+         */
+        async function toggleScheduler() {
+            try {
+                const response = await fetch('/api/scheduler/toggle', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                showToast(data.message, data.enabled ? 'success' : 'info');
+                
+                // Update UI immediately
+                checkSchedulerStatus();
+            } catch (error) {
+                console.error('Failed to toggle scheduler:', error);
+                showToast('Failed to toggle scheduler', 'error');
+            }
+        }
+
+        /**
+         * Trigger meeting prediction
+         */
+        async function predictMeeting() {
+            try {
+                showToast('Starting meeting prediction...', 'info');
+                
+                const response = await fetch('/api/predict-meeting', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                showToast(data.message, 'success');
+                
+                // Schedule a refresh in 30 seconds to check for new predictions
+                setTimeout(refreshPredictions, 30000);
+            } catch (error) {
+                console.error('Failed to start meeting prediction:', error);
+                showToast('Failed to start meeting prediction', 'error');
+            }
+        }
+
+        /**
+         * Trigger next race prediction
+         */
+        async function predictNextRace() {
+            try {
+                showToast('Starting next race prediction...', 'info');
+                
+                const response = await fetch('/api/predict-race', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                showToast(data.message, 'success');
+                
+                // Schedule a refresh in 20 seconds to check for new predictions
+                setTimeout(refreshPredictions, 20000);
+            } catch (error) {
+                console.error('Failed to start race prediction:', error);
+                showToast('Failed to start race prediction', 'error');
+            }
+        }
+
+        /**
+         * Trigger odds refresh
+         */
+        async function refreshOdds() {
+            try {
+                showToast('Starting odds refresh...', 'info');
+                
+                const response = await fetch('/api/refresh-odds', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                showToast(data.message, 'success');
+                
+                // Schedule a refresh in 30 seconds to check for updated predictions
+                setTimeout(refreshPredictions, 30000);
+            } catch (error) {
+                console.error('Failed to start odds refresh:', error);
+                showToast('Failed to start odds refresh', 'error');
+            }
+        }
+
+        /**
+         * Show toast notification
+         * @param {string} message - The message to display
+         * @param {string} type - Toast type: 'success', 'error', 'info', 'warning'
+         */
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            
+            // Create toast element
+            const toast = document.createElement('div');
+            toast.className = `transform transition-all duration-300 ease-in-out max-w-sm w-full shadow-lg rounded-lg pointer-events-auto overflow-hidden`;
+            
+            // Set colors based on type
+            let bgColor, borderColor, icon;
+            switch(type) {
+                case 'success':
+                    bgColor = 'bg-green-50 border-green-200';
+                    borderColor = 'border-green-400';
+                    icon = '✅';
+                    break;
+                case 'error':
+                    bgColor = 'bg-red-50 border-red-200';
+                    borderColor = 'border-red-400';
+                    icon = '❌';
+                    break;
+                case 'warning':
+                    bgColor = 'bg-yellow-50 border-yellow-200';
+                    borderColor = 'border-yellow-400';
+                    icon = '⚠️';
+                    break;
+                default: // info
+                    bgColor = 'bg-blue-50 border-blue-200';
+                    borderColor = 'border-blue-400';
+                    icon = 'ℹ️';
+            }
+            
+            toast.innerHTML = `
+                <div class="${bgColor} border-l-4 ${borderColor} p-4">
+                    <div class="flex items-center">
+                        <span class="text-xl mr-3">${icon}</span>
+                        <p class="text-sm font-medium text-gray-800">${escapeHtml(message)}</p>
+                        <button onclick="this.parentElement.parentElement.parentElement.remove()" class="ml-auto text-gray-400 hover:text-gray-600">
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            // Add to container
+            container.appendChild(toast);
+            
+            // Slide in animation
+            setTimeout(() => {
+                toast.style.opacity = '1';
+                toast.style.transform = 'translateX(0)';
+            }, 10);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(100%)';
+                setTimeout(() => toast.remove(), 300);
+            }, 5000);
+        }
+
+        // Initial load
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Dashboard loaded');
+            
+            // Check scheduler status
+            checkSchedulerStatus();
+            
+            // Set up auto-refresh for predictions
+            setInterval(refreshPredictions, REFRESH_INTERVAL);
+            
+            // Set up periodic scheduler check (every 60 seconds)
+            setInterval(checkSchedulerStatus, 60000);
+        });
+    </script>
+</body>
+</html>
+

@@ -1,10 +1,86 @@
 /* Custom styles for Stanley Racing Predictions */
 
-/* Add any custom CSS here if needed beyond Tailwind */
-
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
 }
 
-/* Future: Add custom styles for racing-specific components */
+/* Smooth transitions for interactive elements */
+.transition-all {
+    transition: all 0.2s ease-in-out;
+}
+
+/* Custom scrollbar for webkit browsers */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Race card hover effects */
+.race-card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.race-card:hover {
+    transform: translateY(-2px);
+}
+
+/* Rank badge animations */
+@keyframes pulse-gold {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.8;
+    }
+}
+
+.rank-1 {
+    animation: pulse-gold 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Loading spinner */
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.animate-spin {
+    animation: spin 1s linear infinite;
+}
+
+/* Responsive table handling */
+@media (max-width: 768px) {
+    .overflow-x-auto {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    table {
+        min-width: 500px;
+    }
+}
+
+/* Status indicators */
+.status-active {
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.4);
+}
+
+.status-inactive {
+    box-shadow: 0 0 10px rgba(156, 163, 175, 0.4);
+}
+
 

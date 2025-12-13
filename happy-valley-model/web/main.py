@@ -8,17 +8,38 @@ from web.db_queries import get_upcoming_races, get_race_predictions, get_all_cur
 from web.models import Race, RaceSummary, SchedulerStatus
 from typing import List
 import os
+import threading
+import json
+from pathlib import Path
 
 app = FastAPI(title="Stanley Racing Predictions")
 templates = Jinja2Templates(directory="web/templates")
 app.mount("/static", StaticFiles(directory="web/static"), name="static")
 
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request, user: str = Depends(get_current_user)):
-    return templates.TemplateResponse("base.html", {
-        "request": request,
-        "user": user
-    })
+async def dashboard(request: Request, user: str = Depends(get_current_user)):
+    """Main dashboard page"""
+    try:
+        predictions = get_all_current_predictions()
+        races = get_upcoming_races()
+        
+        return templates.TemplateResponse("dashboard.html", {
+            "request": request,
+            "user": user,
+            "predictions": predictions,
+            "races": races,
+            "error": None,
+            "now": datetime.now().strftime("%I:%M:%S %p")
+        })
+    except Exception as e:
+        return templates.TemplateResponse("dashboard.html", {
+            "request": request,
+            "user": user,
+            "predictions": [],
+            "races": [],
+            "error": str(e),
+            "now": datetime.now().strftime("%I:%M:%S %p")
+        })
 
 @app.get("/health")
 async def health():
@@ -60,6 +81,15 @@ async def logout():
     response = RedirectResponse(url="/login", status_code=303)
     response.delete_cookie(key="access_token")
     return response
+
+
+@app.get("/analytics", response_class=HTMLResponse)
+async def analytics(request: Request, user: str = Depends(get_current_user)):
+    """Analytics page (placeholder for future implementation)"""
+    return templates.TemplateResponse("base.html", {
+        "request": request,
+        "user": user
+    })
 
 
 # ========== API Endpoints ==========
@@ -140,15 +170,133 @@ async def get_past_predictions_endpoint(
 @app.get("/api/scheduler/status", response_model=SchedulerStatus)
 async def get_scheduler_status(user: str = Depends(get_current_user)):
     """
-    Get scheduler status (placeholder for future implementation)
+    Get scheduler status
     
     Returns:
         Scheduler status information
     """
-    # TODO: Implement actual scheduler status checking
-    # For now, return a placeholder response
-    return {
-        "active": False,
-        "next_job": None
-    }
+    control_file = Path("data/scheduler_control.json")
+    try:
+        if control_file.exists():
+            with open(control_file, 'r') as f:
+                data = json.load(f)
+                return {
+                    "active": data.get('enabled', True),
+                    "next_job": None  # TODO: Query scheduler DB for next job
+                }
+        else:
+            # Default to enabled if file doesn't exist
+            return {
+                "active": True,
+                "next_job": None
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading scheduler status: {str(e)}")
+
+
+@app.post("/api/scheduler/toggle")
+async def toggle_scheduler(user: str = Depends(get_current_user)):
+    """
+    Enable/disable scheduler
+    
+    Returns:
+        New scheduler state
+    """
+    control_file = Path("data/scheduler_control.json")
+    
+    try:
+        # Read current state
+        if control_file.exists():
+            with open(control_file, 'r') as f:
+                data = json.load(f)
+        else:
+            data = {"enabled": True}
+        
+        # Toggle state
+        new_state = not data.get('enabled', True)
+        data['enabled'] = new_state
+        data['last_updated'] = datetime.now().isoformat()
+        data['updated_by'] = user
+        
+        # Write back
+        control_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(control_file, 'w') as f:
+            json.dump(data, f, indent=2)
+        
+        return {
+            "status": "success",
+            "enabled": new_state,
+            "message": f"Scheduler {'enabled' if new_state else 'disabled'}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error toggling scheduler: {str(e)}")
+
+
+@app.post("/api/predict-meeting")
+async def trigger_meeting_prediction(user: str = Depends(get_current_user)):
+    """
+    Trigger prediction for entire meeting
+    
+    Runs make_predictions in background thread
+    """
+    try:
+        from src.make_predictions import main as make_predictions
+        
+        thread = threading.Thread(target=make_predictions)
+        thread.daemon = True
+        thread.start()
+        
+        return {
+            "status": "started",
+            "message": "Meeting prediction running in background"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error starting meeting prediction: {str(e)}")
+
+
+@app.post("/api/predict-race")
+async def trigger_race_prediction(
+    user: str = Depends(get_current_user)
+):
+    """
+    Trigger prediction for next upcoming race
+    
+    Note: Currently predicts the next race only. For specific race prediction,
+    use the meeting prediction instead.
+    """
+    try:
+        from src.predict_next_race import main as predict_next_race
+        
+        thread = threading.Thread(target=predict_next_race)
+        thread.daemon = True
+        thread.start()
+        
+        return {
+            "status": "started",
+            "message": "Prediction for next race running in background"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error starting race prediction: {str(e)}")
+
+
+@app.post("/api/refresh-odds")
+async def refresh_odds(user: str = Depends(get_current_user)):
+    """
+    Refresh odds and regenerate predictions
+    
+    Runs update_odds in background thread
+    """
+    try:
+        from src.update_odds import main as update_odds
+        
+        thread = threading.Thread(target=update_odds)
+        thread.daemon = True
+        thread.start()
+        
+        return {
+            "status": "started",
+            "message": "Odds refresh running in background"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error starting odds refresh: {str(e)}")
 
