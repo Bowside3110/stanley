@@ -3,6 +3,7 @@ region: sgp
 
 services:
 - name: web
+  source_dir: happy-valley-model
   dockerfile_path: Dockerfile.web
   github:
     repo: your-username/stanley-repo
@@ -37,6 +38,7 @@ services:
     value: "adamsalistair1978@gmail.com"
 
 - name: worker
+  source_dir: happy-valley-model
   dockerfile_path: Dockerfile.worker
   github:
     repo: your-username/stanley-repo
