@@ -10,7 +10,16 @@ from typing import List
 import os
 import threading
 import json
+import logging
+import traceback
 from pathlib import Path
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Stanley Racing Predictions")
 templates = Jinja2Templates(directory="web/templates")
@@ -144,6 +153,8 @@ async def list_races(user: str = Depends(get_current_user)):
         races = get_upcoming_races()
         return races
     except Exception as e:
+        logger.error(f"Error in /api/races: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
@@ -159,6 +170,8 @@ async def get_predictions(user: str = Depends(get_current_user)):
         predictions = get_all_current_predictions()
         return predictions
     except Exception as e:
+        logger.error(f"Error in /api/predictions: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
@@ -327,7 +340,15 @@ async def refresh_odds(user: str = Depends(get_current_user)):
     try:
         from src.update_odds import main as update_odds
         
-        thread = threading.Thread(target=update_odds)
+        # Call with explicit arguments to avoid argparse issues
+        def run_update():
+            try:
+                update_odds(date=None, show_changes=False, skip_predictions=False)
+            except Exception as e:
+                logger.error(f"Error in background odds update: {str(e)}")
+                logger.error(traceback.format_exc())
+        
+        thread = threading.Thread(target=run_update)
         thread.daemon = True
         thread.start()
         
@@ -336,5 +357,7 @@ async def refresh_odds(user: str = Depends(get_current_user)):
             "message": "Odds refresh running in background"
         }
     except Exception as e:
+        logger.error(f"Error starting odds refresh: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error starting odds refresh: {str(e)}")
 

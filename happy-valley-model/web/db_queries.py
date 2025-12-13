@@ -4,6 +4,11 @@ Database query functions for API endpoints
 from src.db_config import get_connection, get_placeholder
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+import logging
+import traceback
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 def get_upcoming_races() -> List[Dict[str, Any]]:
@@ -13,11 +18,12 @@ def get_upcoming_races() -> List[Dict[str, Any]]:
     Returns:
         List of race dictionaries with race_id, race_name, course, post_time
     """
-    conn = get_connection()
-    cur = conn.cursor()
-    placeholder = get_placeholder()
-    
+    conn = None
     try:
+        conn = get_connection()
+        cur = conn.cursor()
+        placeholder = get_placeholder()
+        
         # Query races table for future races
         query = f"""
             SELECT 
@@ -31,8 +37,13 @@ def get_upcoming_races() -> List[Dict[str, Any]]:
             ORDER BY post_time ASC
         """
         
-        cur.execute(query, (datetime.now().isoformat(),))
+        current_time = datetime.now().isoformat()
+        logger.info(f"Querying upcoming races with current_time={current_time}")
+        
+        cur.execute(query, (current_time,))
         rows = cur.fetchall()
+        
+        logger.info(f"Found {len(rows)} upcoming races")
         
         # Convert rows to dictionaries
         races = []
@@ -41,9 +52,13 @@ def get_upcoming_races() -> List[Dict[str, Any]]:
             races.append(race)
         
         return races
-    
+    except Exception as e:
+        logger.error(f"Error in get_upcoming_races: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 
 def get_race_predictions(race_id: str) -> Optional[Dict[str, Any]]:
@@ -122,11 +137,12 @@ def get_all_current_predictions() -> List[Dict[str, Any]]:
     Returns:
         List of race dictionaries, each containing race info and predictions
     """
-    conn = get_connection()
-    cur = conn.cursor()
-    placeholder = get_placeholder()
-    
+    conn = None
     try:
+        conn = get_connection()
+        cur = conn.cursor()
+        placeholder = get_placeholder()
+        
         # Get all upcoming races with predictions
         races_query = f"""
             SELECT DISTINCT
@@ -141,8 +157,13 @@ def get_all_current_predictions() -> List[Dict[str, Any]]:
             ORDER BY r.post_time ASC
         """
         
-        cur.execute(races_query, (datetime.now().isoformat(),))
+        current_time = datetime.now().isoformat()
+        logger.info(f"Querying predictions with current_time={current_time}")
+        
+        cur.execute(races_query, (current_time,))
         race_rows = cur.fetchall()
+        
+        logger.info(f"Found {len(race_rows)} races with predictions")
         
         results = []
         
@@ -170,6 +191,8 @@ def get_all_current_predictions() -> List[Dict[str, Any]]:
             
             predictions = [dict(row) for row in runner_rows]
             
+            logger.debug(f"Race {race_id}: {len(predictions)} predictions")
+            
             # Combine race info with predictions
             race_with_predictions = {
                 **race_dict,
@@ -179,9 +202,13 @@ def get_all_current_predictions() -> List[Dict[str, Any]]:
             results.append(race_with_predictions)
         
         return results
-    
+    except Exception as e:
+        logger.error(f"Error in get_all_current_predictions: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 
 def get_past_predictions(limit: int = 10) -> List[Dict[str, Any]]:

@@ -185,42 +185,59 @@ def regenerate_predictions(race_date):
     print(f"\n✅ Fresh predictions saved to {predictions_csv}")
     return predictions_csv
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Update odds and regenerate predictions before race time"
-    )
-    parser.add_argument(
-        "--date",
-        type=str,
-        default=datetime.now().strftime("%Y-%m-%d"),
-        help="Race date (YYYY-MM-DD). Default: today"
-    )
-    parser.add_argument(
-        "--show-changes",
-        action="store_true",
-        help="Show odds changes before/after update"
-    )
-    parser.add_argument(
-        "--skip-predictions",
-        action="store_true",
-        help="Only update odds, don't regenerate predictions"
-    )
+def main(date=None, show_changes=False, skip_predictions=False):
+    """
+    Main function for updating odds and regenerating predictions.
     
-    args = parser.parse_args()
+    Args:
+        date: Race date in YYYY-MM-DD format. Defaults to today.
+        show_changes: Whether to show odds changes before/after update
+        skip_predictions: Whether to skip regenerating predictions
+    """
+    # If called with no arguments, parse from command line
+    if date is None:
+        parser = argparse.ArgumentParser(
+            description="Update odds and regenerate predictions before race time"
+        )
+        parser.add_argument(
+            "--date",
+            type=str,
+            default=datetime.now().strftime("%Y-%m-%d"),
+            help="Race date (YYYY-MM-DD). Default: today"
+        )
+        parser.add_argument(
+            "--show-changes",
+            action="store_true",
+            help="Show odds changes before/after update"
+        )
+        parser.add_argument(
+            "--skip-predictions",
+            action="store_true",
+            help="Only update odds, don't regenerate predictions"
+        )
+        
+        args = parser.parse_args()
+        date = args.date
+        show_changes = args.show_changes
+        skip_predictions = args.skip_predictions
+    
+    # Use provided date or default to today
+    if date is None:
+        date = datetime.now().strftime("%Y-%m-%d")
     
     print("=" * 80)
-    print(f"🎯 UPDATING ODDS FOR {args.date}")
+    print(f"🎯 UPDATING ODDS FOR {date}")
     print("=" * 80)
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 80 + "\n")
     
     # Step 1: Get current odds for comparison (if requested)
     old_odds = None
-    if args.show_changes:
-        old_odds = get_current_odds(args.date)
+    if show_changes:
+        old_odds = get_current_odds(date)
     
     # Step 2: Fetch live odds from HKJC API
-    json_path = fetch_live_odds(args.date)
+    json_path = fetch_live_odds(date)
     
     # Step 3: Update database with new odds
     updates_count = update_odds_in_db(json_path)
@@ -230,12 +247,12 @@ def main():
         return
     
     # Step 4: Show changes (if requested)
-    if args.show_changes and old_odds is not None:
-        show_odds_changes(old_odds, args.date)
+    if show_changes and old_odds is not None:
+        show_odds_changes(old_odds, date)
     
     # Step 5: Regenerate predictions with fresh odds
-    if not args.skip_predictions:
-        predictions_csv = regenerate_predictions(args.date)
+    if not skip_predictions:
+        predictions_csv = regenerate_predictions(date)
         
         print("\n" + "=" * 80)
         print("✅ ODDS UPDATE COMPLETE")
