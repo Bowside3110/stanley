@@ -8,7 +8,57 @@
 
 ## 🔴 Issues Identified
 
-### 1. Argparse Conflict in `update_odds.py`
+### 1. **PostgreSQL TEXT vs TIMESTAMP Comparison (CRITICAL ROOT CAUSE)**
+
+**Error Pattern in Logs:**
+```
+Dec 13 07:01:05  INFO: ... "GET /api/predictions HTTP/1.1" 500 Internal Server Error
+Dec 13 07:05:35  INFO: ... "GET /api/races HTTP/1.1" 500 Internal Server Error
+```
+
+**Root Cause:**
+- The `post_time` column is stored as **TEXT** in both SQLite and PostgreSQL
+- **SQLite:** String comparison with `>` works fine for ISO 8601 timestamps (they sort lexicographically)
+- **PostgreSQL:** String comparison with `>` fails or produces incorrect results when comparing timestamps stored as TEXT
+
+Example of the problem:
+```sql
+-- This query fails in PostgreSQL when post_time is TEXT
+SELECT * FROM races WHERE post_time > '2025-12-13T07:00:00+08:00';
+
+-- PostgreSQL does LEXICOGRAPHIC (alphabetical) comparison on TEXT:
+-- '2025-12-13T19:00:00+08:00' < '2025-12-13T07:00:00+08:00' 
+-- because '1' < '0' in ASCII!
+```
+
+**Fix Applied:**
+Cast TEXT to TIMESTAMP in all SQL queries for proper datetime comparison:
+
+```python
+# Before (broken in PostgreSQL):
+query = f"""
+    SELECT * FROM races 
+    WHERE post_time > {placeholder}
+"""
+
+# After (works in both):
+query = f"""
+    SELECT * FROM races 
+    WHERE CAST(post_time AS TIMESTAMP) > CAST({placeholder} AS TIMESTAMP)
+"""
+```
+
+**Files Modified:**
+- `web/db_queries.py` - All 5 functions that compare `post_time`:
+  - `get_upcoming_races()`
+  - `get_all_current_predictions()` 
+  - `get_past_predictions()`
+  - `get_prediction_accuracy()`
+  - `get_recent_performance()`
+
+---
+
+### 2. Argparse Conflict in `update_odds.py`
 
 **Error Observed in Logs:**
 ```
@@ -158,17 +208,36 @@ def get_upcoming_races() -> List[Dict[str, Any]]:
 
 ## 📝 Why These Errors Don't Happen Locally
 
-### 1. Argparse Issue
+### 1. **TEXT vs TIMESTAMP Comparison**
+- **Local:** Using SQLite which does lexicographic string comparison
+  - ISO 8601 timestamps like `2025-12-13T19:00:00+08:00` happen to sort correctly as strings
+  - Works by accident, not by design!
+- **Production:** Using PostgreSQL which has strict type checking
+  - TEXT comparison uses ASCII/lexicographic ordering, not datetime logic
+  - Fails when comparing times like '07:00' vs '19:00' stored as strings
+
+**Example:**
+```python
+# In SQLite (works by luck):
+'2025-12-13T19:00:00' > '2025-12-13T07:00:00'  # True
+
+# In PostgreSQL with TEXT (broken):
+# Compares character by character:
+# '2025-12-13T1' vs '2025-12-13T0'
+# '1' < '0' in ASCII, so returns False!
+```
+
+### 2. Argparse Issue
 - **Local:** When you run the script directly (`python -m src.update_odds`), `sys.argv` contains expected arguments
 - **Local:** When developing, you likely weren't calling the `/api/refresh-odds` endpoint
 - **Production:** Running under uvicorn with specific startup arguments pollutes `sys.argv`
 
-### 2. Database Differences
+### 3. Database Differences
 - **Local:** Using SQLite (`USE_POSTGRES=false`)
 - **Production:** Using PostgreSQL (`USE_POSTGRES=true`)
-- PostgreSQL has stricter type checking and different datetime handling
+- PostgreSQL has stricter type checking and different string comparison behavior
 
-### 3. Data State
+### 4. Data State
 - **Local:** You likely have test data with predictions for upcoming races
 - **Production:** May not have recent predictions, causing queries to return empty results
 
@@ -176,33 +245,44 @@ def get_upcoming_races() -> List[Dict[str, Any]]:
 
 ## 🔧 Files Modified
 
-1. **`src/update_odds.py`**
-   - Modified `main()` function to accept optional parameters
-   - Maintains backward compatibility for command-line usage
-   - Fixes the argparse conflict when called from web endpoint
-
-2. **`web/main.py`**
-   - Added logging infrastructure
-   - Added error logging to all API endpoints
-   - Modified `/api/refresh-odds` to call `update_odds()` with explicit parameters
-   - Added proper exception handling in background thread
-
-3. **`web/db_queries.py`**
+1. **`web/db_queries.py`** (CRITICAL FIX)
+   - Added `CAST(post_time AS TIMESTAMP)` to all datetime comparisons
+   - Fixes PostgreSQL TEXT vs TIMESTAMP comparison issue
    - Added logging infrastructure
    - Added detailed logging to `get_upcoming_races()`
    - Added detailed logging to `get_all_current_predictions()`
    - Improved connection handling with try-finally blocks
+
+2. **`src/update_odds.py`**
+   - Modified `main()` function to accept optional parameters
+   - Maintains backward compatibility for command-line usage
+   - Fixes the argparse conflict when called from web endpoint
+
+3. **`web/main.py`**
+   - Added logging infrastructure
+   - Added error logging to all API endpoints
+   - Modified `/api/refresh-odds` to call `update_odds()` with explicit parameters
+   - Added proper exception handling in background thread
 
 ---
 
 ## ✅ Expected Improvements
 
 ### 1. Immediate Fixes
+- ✅ `/api/races` and `/api/predictions` will now work correctly in PostgreSQL
+- ✅ Datetime comparisons will work properly (not as string comparisons)
 - ✅ `/api/refresh-odds` will now work without crashing
 - ✅ All 500 errors will now show detailed error messages in logs
 - ✅ Database queries will log their parameters and results
 
-### 2. Better Debugging
+### 2. Why This Is The Root Cause
+The TEXT vs TIMESTAMP issue explains ALL the 500 errors:
+- `/api/predictions` - Uses `post_time > NOW()` comparison → fails with TEXT
+- `/api/races` - Uses `post_time > NOW()` comparison → fails with TEXT  
+- Works locally because SQLite's string comparison happens to work for ISO 8601 format
+- Fails in production because PostgreSQL's TEXT comparison is lexicographic, not chronological
+
+### 3. Better Debugging
 - Production logs will now show:
   - Exact error messages and stack traces
   - SQL query parameters (timestamps, race IDs)

@@ -25,6 +25,8 @@ def get_upcoming_races() -> List[Dict[str, Any]]:
         placeholder = get_placeholder()
         
         # Query races table for future races
+        # Cast post_time to TIMESTAMP for proper datetime comparison in PostgreSQL
+        # For SQLite, CAST is a no-op since it's dynamically typed
         query = f"""
             SELECT 
                 race_id, 
@@ -33,7 +35,7 @@ def get_upcoming_races() -> List[Dict[str, Any]]:
                 post_time,
                 date
             FROM races
-            WHERE post_time > {placeholder}
+            WHERE CAST(post_time AS TIMESTAMP) > CAST({placeholder} AS TIMESTAMP)
             ORDER BY post_time ASC
         """
         
@@ -144,6 +146,7 @@ def get_all_current_predictions() -> List[Dict[str, Any]]:
         placeholder = get_placeholder()
         
         # Get all upcoming races with predictions
+        # Cast post_time to TIMESTAMP for proper datetime comparison in PostgreSQL
         races_query = f"""
             SELECT DISTINCT
                 r.race_id,
@@ -152,7 +155,7 @@ def get_all_current_predictions() -> List[Dict[str, Any]]:
                 r.post_time
             FROM races r
             INNER JOIN runners ru ON r.race_id = ru.race_id
-            WHERE r.post_time > {placeholder}
+            WHERE CAST(r.post_time AS TIMESTAMP) > CAST({placeholder} AS TIMESTAMP)
                 AND ru.predicted_rank IS NOT NULL
             ORDER BY r.post_time ASC
         """
@@ -227,6 +230,7 @@ def get_past_predictions(limit: int = 10) -> List[Dict[str, Any]]:
     
     try:
         # Get recent past races with predictions
+        # Cast post_time to TIMESTAMP for proper datetime comparison
         races_query = f"""
             SELECT DISTINCT
                 r.race_id,
@@ -236,7 +240,7 @@ def get_past_predictions(limit: int = 10) -> List[Dict[str, Any]]:
                 r.date
             FROM races r
             INNER JOIN runners ru ON r.race_id = ru.race_id
-            WHERE r.post_time < {placeholder}
+            WHERE CAST(r.post_time AS TIMESTAMP) < CAST({placeholder} AS TIMESTAMP)
                 AND ru.predicted_rank IS NOT NULL
             ORDER BY r.post_time DESC
             LIMIT {placeholder}
@@ -305,6 +309,7 @@ def get_prediction_accuracy() -> Dict[str, Any]:
     
     try:
         # Query for races with predictions and actual results
+        # Cast post_time to TIMESTAMP for proper datetime comparison
         query = f"""
             SELECT 
                 r.race_id,
@@ -314,7 +319,7 @@ def get_prediction_accuracy() -> Dict[str, Any]:
                 r.date
             FROM races r
             INNER JOIN runners ru ON r.race_id = ru.race_id
-            WHERE r.post_time < {placeholder}
+            WHERE CAST(r.post_time AS TIMESTAMP) < CAST({placeholder} AS TIMESTAMP)
                 AND ru.predicted_rank IS NOT NULL
                 AND ru.position IS NOT NULL
                 AND ru.position != ''
@@ -417,6 +422,7 @@ def get_recent_performance(limit: int = 10) -> List[Dict[str, Any]]:
     
     try:
         # Get recent past races with predictions and results
+        # Cast post_time to TIMESTAMP for proper datetime comparison
         races_query = f"""
             SELECT DISTINCT
                 r.race_id,
@@ -426,7 +432,7 @@ def get_recent_performance(limit: int = 10) -> List[Dict[str, Any]]:
                 r.date
             FROM races r
             INNER JOIN runners ru ON r.race_id = ru.race_id
-            WHERE r.post_time < {placeholder}
+            WHERE CAST(r.post_time AS TIMESTAMP) < CAST({placeholder} AS TIMESTAMP)
                 AND ru.predicted_rank IS NOT NULL
                 AND ru.position IS NOT NULL
                 AND ru.position != ''
