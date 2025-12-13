@@ -43,7 +43,30 @@ async def dashboard(request: Request, user: str = Depends(get_current_user)):
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    """
+    Health check endpoint for DigitalOcean App Platform
+    Tests database connectivity and returns system status
+    """
+    try:
+        # Import here to avoid circular imports
+        from src.db_config import get_connection
+        
+        # Test database connection
+        conn = get_connection()
+        conn.close()
+        
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "database": "disconnected",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = None):

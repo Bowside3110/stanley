@@ -14,6 +14,7 @@ import sys
 import sqlite3
 import subprocess
 import json
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -24,6 +25,16 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Configure logging for DigitalOcean (stdout captured by platform)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)  # DigitalOcean captures stdout
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Constants
 ALERT_EMAIL = "adamsalistair1978@gmail.com"

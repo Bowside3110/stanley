@@ -1,0 +1,75 @@
+# Environment files
+.env
+.env.*
+env.template
+
+# Git
+.git
+.gitignore
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+virtualenv/
+
+# Local databases (use PostgreSQL in production)
+data/historical/*.db
+data/historical/*.db-*
+*.sqlite
+*.sqlite3
+
+# Predictions and logs (generated at runtime)
+data/predictions/
+logs/
+*.log
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node modules (will be installed during build)
+node_modules/
+scripts/node_modules/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Data files
+data/raw/
+data/processed/
+data/test/
+data/future/
+out/
+cookies.txt
+
+# Documentation (not needed in container)
+docs/
+*.md
+LICENSE
+
