@@ -190,11 +190,17 @@ python scripts/scheduler.py
 
 ---
 
-## 🔐 Environment Variables (.env)
+## 🔐 Environment Variables
 
-Create a `.env` file in project root:
+### DigitalOcean App Platform Configuration
+
+Configure these environment variables in DigitalOcean's App Platform dashboard under **Settings > App-Level Environment Variables**:
 
 ```bash
+# Database Configuration (PostgreSQL - Managed by DigitalOcean)
+USE_POSTGRES=true
+DATABASE_URL=${db.DATABASE_URL}  # Auto-populated by DigitalOcean when you attach a managed database
+
 # Email Configuration
 SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
@@ -207,14 +213,23 @@ TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=your-auth-token
 TWILIO_FROM_PHONE=+1234567890
 
+# JWT Secret for Web Dashboard
+JWT_SECRET_KEY=your-secure-random-string-here
+
 # Alert Phone (hardcoded in scheduler.py)
 # ALERT_PHONE=+61417676973  # Set in scripts/scheduler.py:29
 ```
 
+### Local Development (.env file)
+
+For local development, create a `.env` file in project root with the same variables.
+
 **Security Notes:**
-- `.env` is in `.gitignore` - never commit it
+- `.env` is in `.gitignore` - **never commit it to git**
 - Use app-specific passwords for Gmail
-- Store securely in DigitalOcean secrets/environment
+- DATABASE_URL is automatically provided by DigitalOcean when you attach a managed PostgreSQL database
+- In DigitalOcean, use `${db.DATABASE_URL}` to reference the attached database
+- Store all secrets in DigitalOcean's environment variables, not in code
 
 ---
 
