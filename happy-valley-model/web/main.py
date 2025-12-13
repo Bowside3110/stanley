@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from datetime import datetime, timedelta
 from web.auth import create_access_token, verify_password, get_current_user, USERS
-from web.db_queries import get_upcoming_races, get_race_predictions, get_all_current_predictions, get_past_predictions
+from web.db_queries import get_upcoming_races, get_race_predictions, get_all_current_predictions, get_past_predictions, get_prediction_accuracy, get_recent_performance
 from web.models import Race, RaceSummary, SchedulerStatus
 from typing import List
 import os
@@ -85,11 +85,26 @@ async def logout():
 
 @app.get("/analytics", response_class=HTMLResponse)
 async def analytics(request: Request, user: str = Depends(get_current_user)):
-    """Analytics page (placeholder for future implementation)"""
-    return templates.TemplateResponse("base.html", {
-        "request": request,
-        "user": user
-    })
+    """Analytics page showing prediction performance"""
+    try:
+        accuracy = get_prediction_accuracy()
+        recent = get_recent_performance(limit=10)
+        
+        return templates.TemplateResponse("analytics.html", {
+            "request": request,
+            "user": user,
+            "accuracy": accuracy,
+            "recent": recent,
+            "error": None
+        })
+    except Exception as e:
+        return templates.TemplateResponse("analytics.html", {
+            "request": request,
+            "user": user,
+            "accuracy": None,
+            "recent": [],
+            "error": str(e)
+        })
 
 
 # ========== API Endpoints ==========
