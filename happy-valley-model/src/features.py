@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import sqlite3
+import sqlite3  # Keep for legacy compatibility
+from src.db_config import get_connection, get_placeholder
 import numpy as np
 import pandas as pd
 from src.horse_matcher import (
@@ -701,7 +702,7 @@ def _add_odds_history_metrics(df: pd.DataFrame, conn: sqlite3.Connection = None)
 # ---------------- Public entrypoint ----------------
 
 def build_features(db_path: str = "data/historical/hkjc.db") -> pd.DataFrame:
-    conn = sqlite3.connect(db_path)
+    conn = get_connection()
     try:
         df = _base_frame(conn)
         df = _attach_racecard_runner_fields(conn, df)

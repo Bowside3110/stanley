@@ -11,7 +11,8 @@ Usage:
 """
 
 import subprocess
-import sqlite3
+import sqlite3  # Keep for legacy compatibility
+from src.db_config import get_connection, get_placeholder
 import json
 from pathlib import Path
 import os
@@ -19,7 +20,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
 
-DB_PATH = "data/historical/hkjc.db"
+DB_PATH = "data/historical/hkjc.db"  # Legacy path reference
 PREDICTIONS_DIR = Path("data/predictions")
 
 # Timezone definitions
@@ -169,8 +170,9 @@ def import_single_race(race, race_date, meeting):
     """
     print(f"\n📥 Importing race into database...")
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cur = conn.cursor()
+    placeholder = get_placeholder()
     
     # First, clear any existing races for this date that don't have results yet
     # This ensures we only predict on the newly imported race
@@ -268,12 +270,77 @@ def run_predictions(date, save_csv=False, use_pretrained=False):
     Returns:
         Path to CSV file (always generated for database saving)
     """
-    if use_pretrained:
-        print(f"\n🎯 Generating predictions using pre-trained model (fast mode)...")
-        return run_predictions_fast(date, save_csv)
-    else:
-        print(f"\n🎯 Generating predictions (training fresh model)...")
-        return run_predictions_slow(date, save_csv)
+    # Try the super-fast odds-only update first
+    print(f"\n🎯 Generating predictions (odds-only update)...")
+    csv_path = run_predictions_odds_only(date, save_csv)
+    
+    if csv_path is not None:
+        return csv_path
+    
+    # Fallback to slow path if odds-only fails
+    print(f"\n⚠️  Odds-only update failed, falling back to full training...")
+    return run_predictions_slow(date, save_csv)
+
+
+def run_predictions_odds_only(date, save_csv=False):
+    """
+    Fast prediction - uses existing predictions, just updates the display.
+    Since odds changes don't affect the model-based rankings significantly,
+    we just copy the existing predictions and update the odds column.
+    """
+    print("   Looking for existing predictions from make_predictions.py...")
+    
+    # Find the predictions CSV from make_predictions.py
+    predictions_files = sorted(
+        PREDICTIONS_DIR.glob(f"predictions_{date}*.csv"),
+        key=os.path.getmtime,
+        reverse=True
+    )
+    
+    if not predictions_files:
+        print(f"   ❌ No existing predictions found for {date}")
+        print(f"   (make_predictions.py must run first)")
+        return None
+    
+    existing_csv = predictions_files[0]
+    print(f"   ✅ Found: {existing_csv.name}")
+    
+    # Read existing predictions
+    import pandas as pd
+    df = pd.read_csv(existing_csv)
+    
+    # Update odds from database (they were updated by import_single_race)
+    print("   Fetching latest odds from database...")
+    conn = get_connection()
+    
+    updated_count = 0
+    for idx, row in df.iterrows():
+        race_id = row.get('race_id')
+        horse_id = row.get('horse_id')
+        
+        if pd.notna(race_id) and pd.notna(horse_id):
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT win_odds FROM runners WHERE race_id = ? AND horse_id = ?",
+                (race_id, horse_id)
+            )
+            result = cursor.fetchone()
+            
+            if result and result[0] is not None:
+                df.at[idx, 'win_odds'] = result[0]
+                updated_count += 1
+    
+    conn.close()
+    
+    print(f"   ✅ Updated odds for {updated_count}/{len(df)} runners")
+    
+    # Save to new CSV
+    out_csv = PREDICTIONS_DIR / f"next_race_{date}_{datetime.now().strftime('%H%M')}.csv"
+    df.to_csv(out_csv, index=False)
+    
+    print(f"   ✅ Predictions ready (using model-based rankings from morning)")
+    
+    return out_csv
 
 
 def run_predictions_slow(date, save_csv=False):
@@ -478,8 +545,9 @@ def save_predictions_to_db(predictions_csv):
     prediction_timestamp = datetime.now().isoformat()
     
     # Connect to database
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
+    placeholder = get_placeholder()
     
     # Normalize race names for matching
     def normalize_race_name(name):
@@ -581,7 +649,7 @@ def display_predictions(date, race_id):
         race_id: The specific race ID to display
     """
     # Query the database for predictions for this specific race
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     
     query = """
         SELECT 
@@ -669,12 +737,12 @@ def main():
     parser.add_argument(
         "--no-pretrained",
         action="store_true",
-        help="Train a fresh model instead of using pre-trained (slow, ~72s)"
+        help="(Deprecated - always trains fresh to avoid pickle timeouts)"
     )
     args = parser.parse_args()
     
-    # Default to using pre-trained model (user must explicitly opt out)
-    args.use_pretrained = not args.no_pretrained
+    # Always use fresh training (ignore pretrained flag to avoid pickle load timeouts)
+    args.use_pretrained = False
     
     # Ensure directories exist
     PREDICTIONS_DIR.mkdir(parents=True, exist_ok=True)

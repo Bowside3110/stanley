@@ -14,19 +14,20 @@ Usage:
 """
 
 import subprocess
-import sqlite3
+import sqlite3  # Keep for legacy compatibility
+from src.db_config import get_connection, get_placeholder
 import json
 import argparse
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
 
-DB_PATH = "data/historical/hkjc.db"
+DB_PATH = "data/historical/hkjc.db"  # Legacy reference
 PREDICTIONS_DIR = Path("data/predictions")
 
 def get_current_odds(race_date, db_path=DB_PATH):
     """Get current odds from database for comparison."""
-    conn = sqlite3.connect(db_path)
+    conn = get_connection()
     query = """
         SELECT 
             r.race_id,
@@ -81,8 +82,9 @@ def update_odds_in_db(json_path, db_path=DB_PATH):
     else:
         raise ValueError("Unexpected JSON structure: no 'raceMeetings' found")
     
-    conn = sqlite3.connect(db_path)
+    conn = get_connection()
     cur = conn.cursor()
+    placeholder = get_placeholder()
     
     updates_count = 0
     missing_odds = 0
@@ -119,7 +121,7 @@ def update_odds_in_db(json_path, db_path=DB_PATH):
 
 def show_odds_changes(old_df, race_date, db_path=DB_PATH):
     """Show which odds changed and by how much."""
-    conn = sqlite3.connect(db_path)
+    conn = get_connection()
     query = """
         SELECT 
             r.race_id,

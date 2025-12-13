@@ -1,12 +1,12 @@
 import subprocess
-import sqlite3
 import json
 from pathlib import Path
 import os
 import sys
 import pandas as pd
+from src.db_config import get_connection, get_placeholder
 
-DB_PATH = "data/historical/hkjc.db"
+DB_PATH = "data/historical/hkjc.db"  # Used for legacy purposes only
 PREDICTIONS_DIR = Path("data/predictions")
 
 def run_node_fetch():
@@ -41,11 +41,12 @@ def import_races(json_path):
     else:
         raise ValueError("Unexpected JSON structure: no 'raceMeetings' found")
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cur = conn.cursor()
 
     race_count, runner_count = 0, 0
     missing_odds = 0
+    placeholder = get_placeholder()
 
     for meeting in meetings:
         race_date = meeting["date"]
@@ -62,10 +63,20 @@ def import_races(json_path):
             post_time = race.get("postTime", "")
 
             # Insert race
-            cur.execute("""
-                INSERT OR REPLACE INTO races
+            # Use INSERT ON CONFLICT for PostgreSQL compatibility
+            cur.execute(f"""
+                INSERT INTO races
                 (race_id, date, course, race_name, class, distance, going, rail, post_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                ON CONFLICT (race_id) DO UPDATE SET
+                    date = EXCLUDED.date,
+                    course = EXCLUDED.course,
+                    race_name = EXCLUDED.race_name,
+                    class = EXCLUDED.class,
+                    distance = EXCLUDED.distance,
+                    going = EXCLUDED.going,
+                    rail = EXCLUDED.rail,
+                    post_time = EXCLUDED.post_time
             """, (
                 race_id, race_date, course, race_name, race_class,
                 distance, going, rail, post_time
@@ -94,11 +105,22 @@ def import_races(json_path):
                 if final_position == 0:
                     final_position = None
 
-                cur.execute("""
-                    INSERT OR REPLACE INTO runners
+                cur.execute(f"""
+                    INSERT INTO runners
                     (race_id, horse_id, horse, draw, weight, jockey, jockey_id,
                     trainer, trainer_id, win_odds, position, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                    ON CONFLICT (race_id, horse_id) DO UPDATE SET
+                        horse = EXCLUDED.horse,
+                        draw = EXCLUDED.draw,
+                        weight = EXCLUDED.weight,
+                        jockey = EXCLUDED.jockey,
+                        jockey_id = EXCLUDED.jockey_id,
+                        trainer = EXCLUDED.trainer,
+                        trainer_id = EXCLUDED.trainer_id,
+                        win_odds = EXCLUDED.win_odds,
+                        position = EXCLUDED.position,
+                        status = EXCLUDED.status
                 """, (
                     race_id, horse_id, horse_name, draw, weight,
                     jockey_name, jockey_id, trainer_name, trainer_id, win_odds, final_position, status
@@ -220,8 +242,9 @@ def save_predictions_to_db(predictions_csv, db_path="data/historical/hkjc.db"):
     prediction_timestamp = datetime.now().isoformat()
     
     # Connect to database
-    conn = sqlite3.connect(db_path)
+    conn = get_connection()
     cursor = conn.cursor()
+    placeholder = get_placeholder()
     
     # Normalize race names for matching
     def normalize_race_name(name):
@@ -256,12 +279,12 @@ def save_predictions_to_db(predictions_csv, db_path="data/historical/hkjc.db"):
         win_odds = row.get('win_odds')  # Capture odds at prediction time
         
         # Find matching runner to get race_id and horse_id
-        query = """
+        query = f"""
             SELECT run.race_id, run.horse_id, run.horse
             FROM runners run
             JOIN races r ON run.race_id = r.race_id
-            WHERE r.date = ?
-              AND UPPER(REPLACE(r.race_name, '  ', ' ')) = ?
+            WHERE r.date = {placeholder}
+              AND UPPER(REPLACE(r.race_name, '  ', ' ')) = {placeholder}
         """
         
         cursor.execute(query, (prediction_date, race_name_norm))
@@ -278,11 +301,11 @@ def save_predictions_to_db(predictions_csv, db_path="data/historical/hkjc.db"):
             race_id, horse_id, _ = matching_results[0]
             
             # Insert prediction into predictions table
-            insert_query = """
+            insert_query = f"""
                 INSERT INTO predictions
                 (race_id, horse_id, predicted_rank, predicted_score, 
                  prediction_timestamp, model_version, win_odds_at_prediction)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
             """
             cursor.execute(insert_query, (
                 race_id, horse_id, pred_rank, pred_score,
@@ -291,13 +314,13 @@ def save_predictions_to_db(predictions_csv, db_path="data/historical/hkjc.db"):
             matched += 1
             
             # Also update runners table for backward compatibility
-            update_query = """
+            update_query = f"""
                 UPDATE runners
-                SET predicted_rank = ?,
-                    predicted_score = ?,
-                    prediction_date = ?,
-                    model_version = ?
-                WHERE race_id = ? AND horse_id = ?
+                SET predicted_rank = {placeholder},
+                    predicted_score = {placeholder},
+                    prediction_date = {placeholder},
+                    model_version = {placeholder}
+                WHERE race_id = {placeholder} AND horse_id = {placeholder}
             """
             cursor.execute(update_query, (
                 pred_rank, pred_score, prediction_date, model_version,

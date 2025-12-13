@@ -1,6 +1,7 @@
 import os
 import re
-import sqlite3
+import sqlite3  # Keep for legacy compatibility
+from src.db_config import get_connection, get_placeholder
 import time
 import pandas as pd
 from datetime import date, datetime
@@ -187,8 +188,9 @@ def build_future_dataset(courses=("Sha Tin", "Happy Valley"), update_db=True, db
 
 def update_database(df, db_path=DB_PATH):
     """Update the database with race and runner information."""
-    conn = sqlite3.connect(db_path)
+    conn = get_connection()
     cur = conn.cursor()
+    placeholder = get_placeholder()
     
     # Group by race for easier processing
     for race_id, race_group in df.groupby("race_id"):

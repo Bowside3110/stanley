@@ -8,7 +8,8 @@ are available, then calculates various accuracy metrics including odds drift ana
 Can optionally fetch missing results automatically using --fetch-results flag.
 """
 
-import sqlite3
+import sqlite3  # Keep for legacy compatibility
+from src.db_config import get_connection, get_placeholder
 import pandas as pd
 import numpy as np
 import subprocess
@@ -25,7 +26,7 @@ def analyze_prediction_accuracy(db_path="data/historical/hkjc.db"):
     print("PREDICTION ACCURACY ANALYSIS")
     print("=" * 80)
     
-    conn = sqlite3.connect(db_path)
+    conn = get_connection()
     
     # Query races with both predictions and results
     query = """
@@ -215,7 +216,7 @@ def create_race_meeting_csv(db_path="data/historical/hkjc.db", output_dir="data/
     import os
     from datetime import datetime
     
-    conn = sqlite3.connect(db_path)
+    conn = get_connection()
     
     # First, check for the most recent date with predictions (regardless of results)
     latest_pred_query = """
@@ -755,8 +756,9 @@ def update_results_in_db(date, meetings_data, db_path="data/historical/hkjc.db")
     if not meetings_data:
         return 0
     
-    conn = sqlite3.connect(db_path)
+    conn = get_connection()
     cursor = conn.cursor()
+    placeholder = get_placeholder()
     
     updated = 0
     
@@ -842,8 +844,9 @@ if __name__ == "__main__":
         print("=" * 80)
         
         # Get dates needing results
-        conn = sqlite3.connect("data/historical/hkjc.db")
+        conn = get_connection()
         cursor = conn.cursor()
+        placeholder = get_placeholder()
         cursor.execute('''
             SELECT DISTINCT r.date
             FROM races r

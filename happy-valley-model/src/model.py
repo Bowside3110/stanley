@@ -1,4 +1,5 @@
-import sqlite3
+import sqlite3  # Keep for legacy compatibility
+from src.db_config import get_connection, get_placeholder
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
@@ -6,7 +7,7 @@ from sklearn.metrics import accuracy_score
 
 
 def prepare_dataset(db_path="data/historical/hkjc.db"):
-    conn = sqlite3.connect(db_path)
+    conn = get_connection()
 
     query = """
     SELECT r.date as race_date,

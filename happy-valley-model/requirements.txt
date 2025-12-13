@@ -19,6 +19,7 @@ python-dotenv==1.0.0
 twilio==9.3.7
 apscheduler==3.10.4
 sqlalchemy==2.0.36
+psycopg2-binary==2.9.9
 
 # Exploration & visualization
 jupyter==1.0.0
